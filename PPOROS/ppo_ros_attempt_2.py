@@ -46,8 +46,9 @@ def parse_args():
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     args = parser.parse_args()
-    args.batch_size = int(args.num_envs * args.num_steps)
+    args.batch_size = int(args.num_envs * args.num_steps)*2
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
+    print(args)
     # fmt: on
     return args
 
@@ -244,7 +245,7 @@ if __name__ == "__main__":
     agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
     optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.learning_rate * 1, eps=1e-5)
 
-    history_k = 1
+    history_k = 2
 
     # ALGO Logic: Storage setup
     obs = torch.zeros((history_k, args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
@@ -270,12 +271,13 @@ if __name__ == "__main__":
     obs_dim = 4
     action_dim = 1
 
+    # num_updates = 4
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
-        if args.anneal_lr:
-            frac = 1.0 - (update - 1.0) / num_updates
-            lrnow = frac * args.learning_rate
-            optimizer.param_groups[0]["lr"] = lrnow
+        # if args.anneal_lr:
+        #     frac = 1.0 - (update - 1.0) / num_updates
+        #     lrnow = frac * args.learning_rate
+        #     optimizer.param_groups[0]["lr"] = lrnow
 
         global_epoch += 1
         buffer_epoch_index = (global_epoch - 1) % history_k
@@ -317,34 +319,63 @@ if __name__ == "__main__":
         #
         # rewards[:]
 
-        # bootstrap value if not done
-        with torch.no_grad():
-            lastgaelam = 0
-            for j in range(history_k):
-                epoch_j = (buffer_epoch_index - j) % history_k
-                epoch_rewards = rewards[epoch_j]
-                epoch_values = values[epoch_j]
-                epoch_dones = dones[epoch_j]
+        # if update >= history_k:
+        #     num_rshifts = (history_k-1) - buffer_epoch_index
+        #
+        #     rewards = torch.roll(rewards, num_rshifts)
+        #     values = torch.roll(values, num_rshifts)
+        #     dones = torch.roll(dones, num_rshifts)
+            #
+            # rewards_front = rewards[:buffer_epoch_index]
+            # values_front = values[:buffer_epoch_index]
+            # dones_front = dones[:buffer_epoch_index]
+            #
+            # rewards[:buffer_epoch_index + 1] = rewards[buffer_epoch_index+1:]
+            # values[:buffer_epoch_index + 1] = values[buffer_epoch_index+1:]
+            # dones[:buffer_epoch_index + 1] = dones[buffer_epoch_index+1:]
+            #
+            # rewards[buffer_epoch_index+1:] = rewards_front
+            # values[buffer_epoch_index+1:] = values_front
+            # dones[buffer_epoch_index+1:] = dones_front
 
-                if epoch_j == buffer_epoch_index:
-                    next_value = agent.get_value(next_obs).reshape(1, -1)
-                    next_done = next_done
-                else:
-                    next_value = agent.get_value(obs[(epoch_j + 1) % history_k, 0]).reshape(1, -1)
-                    next_done = dones[(epoch_j + 1) % history_k, 0]
-
-                for t in reversed(range(args.num_steps)):
-                    if t == args.num_steps - 1:
-                        nextnonterminal = 1.0 - next_done
-                        nextvalues = next_value
-                    else:
-                        nextnonterminal = 1.0 - epoch_dones[t + 1]
-                        nextvalues = epoch_values[t + 1]
-                    delta = epoch_rewards[t] + args.gamma * nextvalues * nextnonterminal - epoch_values[t]
-                    advantages[epoch_j, t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-                returns[epoch_j] = advantages + epoch_values
+        num_rshifts = (history_k - 1) - buffer_epoch_index
 
         # # bootstrap value if not done
+        with torch.no_grad():
+            lastgaelam = 0
+            if update > history_k:
+                epoch_rewards = torch.roll(rewards, num_rshifts, dims=0).reshape(-1, 1)
+                epoch_values = torch.roll(values, num_rshifts, dims=0).reshape(-1, 1)
+                epoch_dones = torch.roll(dones, num_rshifts, dims=0).reshape(-1, 1)
+            else:
+                epoch_rewards = rewards[:update].reshape(-1, 1)
+                epoch_values = values[:update].reshape(-1,1)
+                epoch_dones = dones[:update].reshape(-1,1)
+
+            next_value = agent.get_value(next_obs).reshape(1, -1)
+            advantages = torch.zeros_like(epoch_rewards).to(device)
+            next_done = next_done
+
+            num_steps = epoch_rewards.shape[0]
+            for t in reversed(range(num_steps)):
+                if t == num_steps - 1:
+                    nextnonterminal = 1.0 - next_done
+                    nextvalues = next_value
+                else:
+                    nextnonterminal = 1.0 - epoch_dones[t + 1]
+                    nextvalues = epoch_values[t + 1]
+                delta = epoch_rewards[t] + args.gamma * nextvalues * nextnonterminal - epoch_values[t]
+                advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+            returns = advantages + epoch_values
+
+        if update >= history_k:
+            returns = returns.reshape(history_k, -1, 1)
+            advantages = advantages.reshape(history_k, -1, 1)
+        else:
+            returns = returns.reshape(buffer_epoch_index+1, -1, 1)
+            advantages = advantages.reshape(buffer_epoch_index+1, -1, 1)
+
+        # bootstrap value if not done
         # with torch.no_grad():
         #     lastgaelam = 0
         #     for j in range(history_k):
@@ -372,9 +403,13 @@ if __name__ == "__main__":
         #             advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
         #         returns[epoch_j] = advantages + epoch_values
 
-        if update % 1 == 0:
-            v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var = \
-                update_ppo(args, obs[:global_epoch], logprobs[:global_epoch], actions[:global_epoch], advantages[:global_epoch], returns[:global_epoch], values[:global_epoch])
+        if update % 2 == 0:
+            if update < history_k:
+                v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var = \
+                    update_ppo(args, obs[:global_epoch], logprobs[:global_epoch], actions[:global_epoch], advantages[:global_epoch], returns[:global_epoch], values[:global_epoch])
+            else:
+                v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var = \
+                    update_ppo(args, obs, logprobs, actions, advantages, returns, values)
 
             log_statistics(writer, v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var)
 
