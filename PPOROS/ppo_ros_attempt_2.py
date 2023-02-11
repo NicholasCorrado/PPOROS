@@ -255,6 +255,7 @@ if __name__ == "__main__":
     dones = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
     values = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
     returns = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    advantages = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -309,31 +310,73 @@ if __name__ == "__main__":
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                 # writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
+
+        # rewards2 = rewards[:buffer_epoch_index+1]
+        # values2 = values[:buffer_epoch_index+1]
+        # dones2 = dones[:buffer_epoch_index+1]
+        #
+        # rewards[:]
+
         # bootstrap value if not done
         with torch.no_grad():
-            j=0
-            epoch_rewards = rewards[j]
-            epoch_values = values[j]
-            epoch_dones = dones[j]
-
-            next_value = agent.get_value(next_obs).reshape(1, -1)
-            advantages = torch.zeros_like(epoch_rewards).to(device)
             lastgaelam = 0
-            for t in reversed(range(args.num_steps)):
-                if t == args.num_steps - 1:
-                    nextnonterminal = 1.0 - next_done
-                    nextvalues = next_value
+            for j in range(history_k):
+                epoch_j = (buffer_epoch_index - j) % history_k
+                epoch_rewards = rewards[epoch_j]
+                epoch_values = values[epoch_j]
+                epoch_dones = dones[epoch_j]
+
+                if epoch_j == buffer_epoch_index:
+                    next_value = agent.get_value(next_obs).reshape(1, -1)
+                    next_done = next_done
                 else:
-                    nextnonterminal = 1.0 - epoch_dones[t + 1]
-                    nextvalues = epoch_values[t + 1]
-                delta = epoch_rewards[t] + args.gamma * nextvalues * nextnonterminal - epoch_values[t]
-                advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-            returns = advantages + epoch_values
+                    next_value = agent.get_value(obs[(epoch_j + 1) % history_k, 0]).reshape(1, -1)
+                    next_done = dones[(epoch_j + 1) % history_k, 0]
 
-        v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var = \
-            update_ppo(args, obs, logprobs, actions, advantages, returns, values)
+                for t in reversed(range(args.num_steps)):
+                    if t == args.num_steps - 1:
+                        nextnonterminal = 1.0 - next_done
+                        nextvalues = next_value
+                    else:
+                        nextnonterminal = 1.0 - epoch_dones[t + 1]
+                        nextvalues = epoch_values[t + 1]
+                    delta = epoch_rewards[t] + args.gamma * nextvalues * nextnonterminal - epoch_values[t]
+                    advantages[epoch_j, t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                returns[epoch_j] = advantages + epoch_values
 
-        log_statistics(writer, v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var)
+        # # bootstrap value if not done
+        # with torch.no_grad():
+        #     lastgaelam = 0
+        #     for j in range(history_k):
+        #         epoch_j = (buffer_epoch_index - j) % history_k
+        #         epoch_rewards = rewards[epoch_j]
+        #         epoch_values = values[epoch_j]
+        #         epoch_dones = dones[epoch_j]
+        #
+        #         advantages = torch.zeros_like(epoch_rewards).to(device)
+        #         if epoch_j == buffer_epoch_index:
+        #             next_value = agent.get_value(next_obs).reshape(1, -1)
+        #             next_done = next_done
+        #         else:
+        #             next_value = agent.get_value(obs[(epoch_j + 1) % history_k, 0]).reshape(1, -1)
+        #             next_done = dones[(epoch_j + 1) % history_k, 0]
+        #
+        #         for t in reversed(range(args.num_steps)):
+        #             if t == args.num_steps - 1:
+        #                 nextnonterminal = 1.0 - next_done
+        #                 nextvalues = next_value
+        #             else:
+        #                 nextnonterminal = 1.0 - epoch_dones[t + 1]
+        #                 nextvalues = epoch_values[t + 1]
+        #             delta = epoch_rewards[t] + args.gamma * nextvalues * nextnonterminal - epoch_values[t]
+        #             advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+        #         returns[epoch_j] = advantages + epoch_values
+
+        if update % 1 == 0:
+            v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var = \
+                update_ppo(args, obs[:global_epoch], logprobs[:global_epoch], actions[:global_epoch], advantages[:global_epoch], returns[:global_epoch], values[:global_epoch])
+
+            log_statistics(writer, v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var)
 
     envs.close()
     writer.close()
