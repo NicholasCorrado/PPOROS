@@ -1,6 +1,5 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy
 import argparse
-import copy
 import os
 import random
 import time
@@ -11,15 +10,19 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import yaml
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
+
+from PPOROS.evaluate import Evaluate
+from PPOROS.utils import get_latest_run_id
 
 
 def parse_args():
     # fmt: off
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"), help="the name of this experiment")
-    parser.add_argument("--seed", type=int, default=1, help="seed of the experiment")
+    parser.add_argument("--seed", type=int, default=None, help="seed of the experiment")
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, cuda will be enabled by default")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="if toggled, this experiment will be tracked with Weights and Biases")
@@ -29,10 +32,10 @@ def parse_args():
 
     # Algorithm specific arguments
     parser.add_argument("--env-id", type=str, default="InvertedPendulum-v4", help="the id of the environment")
-    parser.add_argument("--total-timesteps", type=int, default=1000000, help="total timesteps of the experiments")
+    parser.add_argument("--total-timesteps", type=int, default=100000, help="total timesteps of the experiments")
     parser.add_argument("--learning-rate", type=float, default=3e-4, help="the learning rate of the optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=2048, help="the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--num-steps", type=int, default=1024, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -46,7 +49,7 @@ def parse_args():
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     args = parser.parse_args()
-    args.batch_size = int(args.num_envs * args.num_steps)*2
+    args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     print(args)
     # fmt: on
@@ -73,6 +76,23 @@ def make_env(env_id, idx, capture_video, run_name, gamma):
 
     return thunk
 
+def make_eval_env(env_id, idx, capture_video, run_name, gamma):
+    def thunk():
+        if capture_video:
+            env = gym.make(env_id, render_mode="rgb_array")
+        else:
+            env = gym.make(env_id)
+        env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
+        env = gym.wrappers.RecordEpisodeStatistics(env)
+        if capture_video:
+            if idx == 0:
+                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+        env = gym.wrappers.ClipAction(env)
+        env = gym.wrappers.NormalizeObservation(env)
+        env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
+        return env
+
+    return thunk
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -110,6 +130,13 @@ class Agent(nn.Module):
         if action is None:
             action = probs.sample()
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
+
+    def get_action(self, x, deterministic=True):
+        action_mean = self.actor_mean(x)
+        # action_logstd = self.actor_logstd.expand_as(action_mean)
+        # action_std = torch.exp(action_logstd)
+        # probs = Normal(action_mean, action_std)
+        return action_mean
 
 def log_statistics(writer, v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var):
     # TRY NOT TO MODIFY: record rewards for plotting purposes
@@ -242,25 +269,29 @@ if __name__ == "__main__":
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
-    optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.learning_rate * 1, eps=1e-5)
+    save_dir = f"results/{args.env_id}/ppo"
+    run_id = get_latest_run_id(save_dir=save_dir) + 1
+    save_dir += f"/run_{run_id}"
 
-    history_k = 2
+    eval_envs = gym.vector.SyncVectorEnv(
+        [make_eval_env(args.env_id, i, args.capture_video, run_name, args.gamma) for i in range(args.num_envs)]
+    )
+    eval_module = Evaluate(model=agent, eval_env=eval_envs, n_eval_episodes=10, log_path=save_dir, device=device)
+
+    # Save config
+    with open(os.path.join(save_dir, "config.yml"), "w") as f:
+        yaml.dump(args, f, sort_keys=True)
 
     # ALGO Logic: Storage setup
-    obs = torch.zeros((history_k, args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-    obs_p = torch.zeros((history_k, args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-    actions = torch.zeros((history_k, args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
-    logprobs = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
-    returns = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
-    advantages = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
+    actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
+    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
-    global_epoch = 0
     start_time = time.time()
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(device)
@@ -268,10 +299,7 @@ if __name__ == "__main__":
     num_updates = args.total_timesteps // args.batch_size
     video_filenames = set()
 
-    obs_dim = 4
-    action_dim = 1
-
-    # num_updates = 4
+    # num_updates = 2
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
         # if args.anneal_lr:
@@ -279,25 +307,22 @@ if __name__ == "__main__":
         #     lrnow = frac * args.learning_rate
         #     optimizer.param_groups[0]["lr"] = lrnow
 
-        global_epoch += 1
-        buffer_epoch_index = (global_epoch - 1) % history_k
-
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
-            obs[buffer_epoch_index, step] = next_obs
-            dones[buffer_epoch_index, step] = next_done
+            obs[step] = next_obs
+            dones[step] = next_done
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
                 action, logprob, _, value = agent.get_action_and_value(next_obs)
-                values[buffer_epoch_index, step] = value.flatten()
-            actions[buffer_epoch_index, step] = action
-            logprobs[buffer_epoch_index, step] = logprob
+                values[step] = value.flatten()
+            actions[step] = action
+            logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminated, truncated, infos = envs.step(action.cpu().numpy())
             done = np.logical_or(terminated, truncated)
-            rewards[buffer_epoch_index, step] = torch.tensor(reward).to(device).view(-1)
+            rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
 
             # Only print when at least 1 env is done
@@ -312,106 +337,30 @@ if __name__ == "__main__":
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                 # writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
-
-        # rewards2 = rewards[:buffer_epoch_index+1]
-        # values2 = values[:buffer_epoch_index+1]
-        # dones2 = dones[:buffer_epoch_index+1]
-        #
-        # rewards[:]
-
-        # if update >= history_k:
-        #     num_rshifts = (history_k-1) - buffer_epoch_index
-        #
-        #     rewards = torch.roll(rewards, num_rshifts)
-        #     values = torch.roll(values, num_rshifts)
-        #     dones = torch.roll(dones, num_rshifts)
-            #
-            # rewards_front = rewards[:buffer_epoch_index]
-            # values_front = values[:buffer_epoch_index]
-            # dones_front = dones[:buffer_epoch_index]
-            #
-            # rewards[:buffer_epoch_index + 1] = rewards[buffer_epoch_index+1:]
-            # values[:buffer_epoch_index + 1] = values[buffer_epoch_index+1:]
-            # dones[:buffer_epoch_index + 1] = dones[buffer_epoch_index+1:]
-            #
-            # rewards[buffer_epoch_index+1:] = rewards_front
-            # values[buffer_epoch_index+1:] = values_front
-            # dones[buffer_epoch_index+1:] = dones_front
-
-        num_rshifts = (history_k - 1) - buffer_epoch_index
-
-        # # bootstrap value if not done
+        # bootstrap value if not done
         with torch.no_grad():
-            lastgaelam = 0
-            if update > history_k:
-                epoch_rewards = torch.roll(rewards, num_rshifts, dims=0).reshape(-1, 1)
-                epoch_values = torch.roll(values, num_rshifts, dims=0).reshape(-1, 1)
-                epoch_dones = torch.roll(dones, num_rshifts, dims=0).reshape(-1, 1)
-            else:
-                epoch_rewards = rewards[:update].reshape(-1, 1)
-                epoch_values = values[:update].reshape(-1,1)
-                epoch_dones = dones[:update].reshape(-1,1)
-
             next_value = agent.get_value(next_obs).reshape(1, -1)
-            advantages = torch.zeros_like(epoch_rewards).to(device)
-            next_done = next_done
-
-            num_steps = epoch_rewards.shape[0]
-            for t in reversed(range(num_steps)):
-                if t == num_steps - 1:
+            advantages = torch.zeros_like(rewards).to(device)
+            lastgaelam = 0
+            for t in reversed(range(args.num_steps)):
+                if t == args.num_steps - 1:
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
                 else:
-                    nextnonterminal = 1.0 - epoch_dones[t + 1]
-                    nextvalues = epoch_values[t + 1]
-                delta = epoch_rewards[t] + args.gamma * nextvalues * nextnonterminal - epoch_values[t]
+                    nextnonterminal = 1.0 - dones[t + 1]
+                    nextvalues = values[t + 1]
+                delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-            returns = advantages + epoch_values
+            returns = advantages + values
 
-        if update >= history_k:
-            returns = returns.reshape(history_k, -1, 1)
-            advantages = advantages.reshape(history_k, -1, 1)
-        else:
-            returns = returns.reshape(buffer_epoch_index+1, -1, 1)
-            advantages = advantages.reshape(buffer_epoch_index+1, -1, 1)
+        v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var = \
+            update_ppo(args, obs, logprobs, actions, advantages, returns, values)
 
-        # bootstrap value if not done
-        # with torch.no_grad():
-        #     lastgaelam = 0
-        #     for j in range(history_k):
-        #         epoch_j = (buffer_epoch_index - j) % history_k
-        #         epoch_rewards = rewards[epoch_j]
-        #         epoch_values = values[epoch_j]
-        #         epoch_dones = dones[epoch_j]
-        #
-        #         advantages = torch.zeros_like(epoch_rewards).to(device)
-        #         if epoch_j == buffer_epoch_index:
-        #             next_value = agent.get_value(next_obs).reshape(1, -1)
-        #             next_done = next_done
-        #         else:
-        #             next_value = agent.get_value(obs[(epoch_j + 1) % history_k, 0]).reshape(1, -1)
-        #             next_done = dones[(epoch_j + 1) % history_k, 0]
-        #
-        #         for t in reversed(range(args.num_steps)):
-        #             if t == args.num_steps - 1:
-        #                 nextnonterminal = 1.0 - next_done
-        #                 nextvalues = next_value
-        #             else:
-        #                 nextnonterminal = 1.0 - epoch_dones[t + 1]
-        #                 nextvalues = epoch_values[t + 1]
-        #             delta = epoch_rewards[t] + args.gamma * nextvalues * nextnonterminal - epoch_values[t]
-        #             advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-        #         returns[epoch_j] = advantages + epoch_values
+        log_statistics(writer, v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var)
 
-        if update % 2 == 0:
-            if update < history_k:
-                v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var = \
-                    update_ppo(args, obs[:global_epoch], logprobs[:global_epoch], actions[:global_epoch], advantages[:global_epoch], returns[:global_epoch], values[:global_epoch])
-            else:
-                v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var = \
-                    update_ppo(args, obs, logprobs, actions, advantages, returns, values)
-
-            log_statistics(writer, v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var)
-
+        # if update % 1 == 0:
+        #     current_time = time.time()-start_time
+        #     print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
+        #     eval_module.evaluate(global_step)
     envs.close()
     writer.close()
