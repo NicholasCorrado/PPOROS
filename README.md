@@ -6,4 +6,5 @@ conda install tensorboard
 conda install mujoco
 conda install imageio
 pip install gymnasium
+pip install pyyaml
 ```
