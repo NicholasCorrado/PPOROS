@@ -14,7 +14,6 @@ import torch.nn as nn
 import torch.optim as optim
 import yaml
 from torch.distributions.categorical import Categorical
-from torch.utils.tensorboard import SummaryWriter
 
 from PPOROS.evaluate import Evaluate
 from PPOROS.utils import get_latest_run_id
@@ -35,7 +34,8 @@ def parse_args():
     # Algorithm specific arguments
     parser.add_argument("--env-id", type=str, default="CartPole-v1", help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=100000, help="total timesteps of the experiments")
-    parser.add_argument("--learning-rate", type=float, default=2.5e-4, help="the learning rate of the optimizer")
+    parser.add_argument("--learning-rate", "-lr", type=float, default=2.5e-4, help="the learning rate of the optimizer")
+    parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=2.5e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=128, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
@@ -191,18 +191,6 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     var_y = np.var(y_true)
     explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-    # TRY NOT TO MODIFY: record rewards for plotting purposes
-    writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-    writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-    writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-    writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-    writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-    writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-    writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-    writer.add_scalar("losses/explained_variance", explained_var, global_step)
-    # print("SPS:", int(global_step / (time.time() - start_time)))
-    # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-
 def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size, writer):
 
     # flatten the batch
@@ -257,24 +245,12 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
             if approx_kl > args.target_kl:
                 break
 
-    # TRY NOT TO MODIFY: record rewards for plotting purposes
-    writer.add_scalar("losses/ros/policy_loss", pg_loss.item(), global_step)
-    writer.add_scalar("losses/ros/entropy", entropy_loss.item(), global_step)
-    writer.add_scalar("losses/ros/old_approx_kl", old_approx_kl.item(), global_step)
-    writer.add_scalar("losses/ros/approx_kl", approx_kl.item(), global_step)
-    writer.add_scalar("losses/ros/clipfrac", np.mean(clipfracs), global_step)
-
 def main():
     args = parse_args()
     if args.seed is None:
         args.seed = np.random.randint(2 ** 32 - 1)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-
-    writer = SummaryWriter(f"runs/{run_name}")
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
+    writer = None
 
     save_dir = f"{args.results_dir}/{args.env_id}/{args.results_subdir}/ppo_ros"
     run_id = get_latest_run_id(save_dir=save_dir) + 1
@@ -360,10 +336,6 @@ def main():
 
             buffer_pos += 1
             buffer_pos %= buffer_size
-            for item in info:
-                if "episode" in item.keys():
-                    writer.add_scalar("charts/episodic_return", item["episode"]["r"], global_step)
-                    break
 
         # Reorder the replay data so that the most new data is at the back.
         # We do this to avoid modifying existing the CleanRL PPO update code, which assumes buffer[0] is the oldest transition
@@ -419,7 +391,6 @@ def main():
 
 
     envs.close()
-    writer.close()
 
 if __name__ == "__main__":
     main()
