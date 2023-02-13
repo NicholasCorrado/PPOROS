@@ -268,15 +268,17 @@ if __name__ == "__main__":
     eval_envs = gym.vector.SyncVectorEnv(
         [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name) for i in range(1)]
     )
-    eval_module = Evaluate(model=agent, eval_env=eval_envs, n_eval_episodes=10, log_path=save_dir, device=device)
+    eval_module = Evaluate(model=agent, eval_env=eval_envs, n_eval_episodes=50, log_path=save_dir, device=device)
 
     # Save config
     with open(os.path.join(save_dir, "config.yml"), "w") as f:
         yaml.dump(args, f, sort_keys=True)
 
     # ALGO Logic: Storage setup
-    history_k = 1
+    history_k = 10
     buffer_size = history_k * args.num_steps
+    args.batch_size = int(args.num_envs * args.num_steps)*history_k
+    args.minibatch_size = int(args.batch_size // args.num_minibatches)
 
     # ALGO Logic: Storage setup
     obs = torch.zeros((buffer_size, args.num_envs) + envs.single_observation_space.shape).to(device)
@@ -297,17 +299,17 @@ if __name__ == "__main__":
     next_obs = torch.Tensor(envs.reset()).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
-    num_updates = 10
+    num_updates = 4*history_k
 
     obs_dim = envs.single_observation_space.shape[0]
     action_dim = 1
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
-        if args.anneal_lr:
-            frac = 1.0 - (update - 1.0) / num_updates
-            lrnow = frac * args.learning_rate
-            optimizer.param_groups[0]["lr"] = lrnow
+        # if args.anneal_lr:
+        #     frac = 1.0 - (update - 1.0) / num_updates
+        #     lrnow = frac * args.learning_rate
+        #     optimizer.param_groups[0]["lr"] = lrnow
 
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
@@ -335,37 +337,40 @@ if __name__ == "__main__":
                     # writer.add_scalar("charts/episodic_length", item["episode"]["l"], global_step)
                     break
 
-        # if update > history_k:
-        # update values and logprobs
-        with torch.no_grad():
-            _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
-            values = new_value
-            logprobs = new_logprob.reshape(-1,1)
 
-        # bootstrap value if not done
-        with torch.no_grad():
-            next_value = agent.get_value(next_obs).reshape(1, -1)
-            advantages = torch.zeros_like(rewards).to(device)
-            lastgaelam = 0
-            num_steps = rewards.shape[0]
-
-            if global_step < buffer_size:
-                indices = np.arange(buffer_pos)
-            else:
-                indices = (np.arange(buffer_size) + buffer_pos) % buffer_size
-
-            for t in reversed(indices):
-                if t == num_steps - 1:
-                    nextnonterminal = 1.0 - next_done
-                    nextvalues = next_value
-                else:
-                    nextnonterminal = 1.0 - dones[t + 1]
-                    nextvalues = values[t + 1]
-                delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-            returns = advantages + values
 
         if update % history_k == 0:
+
+            # if update > history_k:
+            # update values and logprobs
+            with torch.no_grad():
+                _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
+                values = new_value
+                logprobs = new_logprob.reshape(-1, 1)
+
+            # bootstrap value if not done
+            with torch.no_grad():
+                next_value = agent.get_value(next_obs).reshape(1, -1)
+                advantages = torch.zeros_like(rewards).to(device)
+                lastgaelam = 0
+                num_steps = rewards.shape[0]
+
+                if global_step < buffer_size:
+                    indices = np.arange(buffer_pos)
+                else:
+                    indices = (np.arange(buffer_size) + buffer_pos) % buffer_size
+
+                for t in reversed(indices):
+                    if t == num_steps - 1:
+                        nextnonterminal = 1.0 - next_done
+                        nextvalues = next_value
+                    else:
+                        nextnonterminal = 1.0 - dones[t + 1]
+                        nextvalues = values[t + 1]
+                    delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                    advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                returns = advantages + values
+
             update_ppo(args, global_step, obs, logprobs, actions, advantages, returns, values, writer)
 
         if update % history_k == 0:
