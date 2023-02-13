@@ -279,20 +279,20 @@ if __name__ == "__main__":
     buffer_size = history_k * args.num_steps
 
     # ALGO Logic: Storage setup
-    obs = torch.zeros((history_k*args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-    actions = torch.zeros((history_k*args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
-    logprobs = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
-    returns = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
-    advantages = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
-    timesteps = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
+    obs = torch.zeros((buffer_size, args.num_envs) + envs.single_observation_space.shape).to(device)
+    actions = torch.zeros((buffer_size, args.num_envs) + envs.single_action_space.shape).to(device)
+    logprobs = torch.zeros((buffer_size, args.num_envs)).to(device)
+    rewards = torch.zeros((buffer_size, args.num_envs)).to(device)
+    dones = torch.zeros((buffer_size, args.num_envs)).to(device)
+    values = torch.zeros((buffer_size, args.num_envs)).to(device)
+    returns = torch.zeros((buffer_size, args.num_envs)).to(device)
+    advantages = torch.zeros((buffer_size, args.num_envs)).to(device)
+    timesteps = torch.zeros((buffer_size, args.num_envs)).to(device)
 
+    buffer_pos = 0
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
-    buffer_pos = 0
     start_time = time.time()
     next_obs = torch.Tensor(envs.reset()).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
