@@ -275,12 +275,19 @@ if __name__ == "__main__":
         yaml.dump(args, f, sort_keys=True)
 
     # ALGO Logic: Storage setup
-    obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    history_k = 1
+
+    # ALGO Logic: Storage setup
+    obs = torch.zeros((history_k, args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
+    actions = torch.zeros((history_k, args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
+    logprobs = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    rewards = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    dones = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    values = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    returns = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    advantages = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    timesteps = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -298,19 +305,19 @@ if __name__ == "__main__":
 
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
-            obs[step] = next_obs
-            dones[step] = next_done
+            obs[0, step] = next_obs
+            dones[0, step] = next_done
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
                 action, logprob, _, value = agent.get_action_and_value(next_obs)
-                values[step] = value.flatten()
-            actions[step] = action
-            logprobs[step] = logprob
+                values[0, step] = value.flatten()
+            actions[0, step] = action
+            logprobs[0, step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, done, info = envs.step(action.cpu().numpy())
-            rewards[step] = torch.tensor(reward).to(device).view(-1)
+            rewards[0, step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
 
             for item in info:
@@ -322,19 +329,28 @@ if __name__ == "__main__":
 
         # bootstrap value if not done
         with torch.no_grad():
+            flat_rewards = rewards.reshape(-1, 1)
+            flat_values = values.reshape(-1, 1)
+            flat_dones = dones.reshape(-1, 1)
+            flat_timesteps = timesteps.reshape(-1, 1)
+
+
             next_value = agent.get_value(next_obs).reshape(1, -1)
-            advantages = torch.zeros_like(rewards).to(device)
+            advantages = torch.zeros_like(flat_rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
                 if t == args.num_steps - 1:
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
                 else:
-                    nextnonterminal = 1.0 - dones[t + 1]
-                    nextvalues = values[t + 1]
-                delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                    nextnonterminal = 1.0 - flat_dones[t + 1]
+                    nextvalues = flat_values[t + 1]
+                delta = flat_rewards[t] + args.gamma * nextvalues * nextnonterminal - flat_values[t]
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
+
+            returns = returns.reshape(history_k, -1, 1)
+            advantages = advantages.reshape(history_k, -1, 1)
 
         update_ppo(args, obs, logprobs, actions, advantages, returns, values, writer)
 
