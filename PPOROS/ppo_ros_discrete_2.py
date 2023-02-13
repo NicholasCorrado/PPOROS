@@ -276,21 +276,23 @@ if __name__ == "__main__":
 
     # ALGO Logic: Storage setup
     history_k = 1
+    buffer_size = history_k * args.num_steps
 
     # ALGO Logic: Storage setup
-    obs = torch.zeros((history_k, args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-    actions = torch.zeros((history_k, args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
-    logprobs = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
-    returns = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
-    advantages = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
-    timesteps = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    obs = torch.zeros((history_k*args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
+    actions = torch.zeros((history_k*args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
+    logprobs = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
+    rewards = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
+    dones = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
+    values = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
+    returns = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
+    advantages = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
+    timesteps = torch.zeros((history_k*args.num_steps, args.num_envs)).to(device)
 
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
+    buffer_pos = 0
     start_time = time.time()
     next_obs = torch.Tensor(envs.reset()).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
@@ -305,21 +307,23 @@ if __name__ == "__main__":
 
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
-            obs[0, step] = next_obs
-            dones[0, step] = next_done
+            obs[buffer_pos] = next_obs
+            dones[buffer_pos] = next_done
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
                 action, logprob, _, value = agent.get_action_and_value(next_obs)
-                values[0, step] = value.flatten()
-            actions[0, step] = action
-            logprobs[0, step] = logprob
+                values[buffer_pos] = value.flatten()
+            actions[buffer_pos] = action
+            logprobs[buffer_pos] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, done, info = envs.step(action.cpu().numpy())
-            rewards[0, step] = torch.tensor(reward).to(device).view(-1)
+            rewards[buffer_pos] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
 
+            buffer_pos += 1
+            buffer_pos %= buffer_size
             for item in info:
                 if "episode" in item.keys():
                     # print(f"global_step={global_step}, episodic_return={item['episode']['r']}")
@@ -329,28 +333,23 @@ if __name__ == "__main__":
 
         # bootstrap value if not done
         with torch.no_grad():
-            flat_rewards = rewards.reshape(-1, 1)
-            flat_values = values.reshape(-1, 1)
-            flat_dones = dones.reshape(-1, 1)
-            flat_timesteps = timesteps.reshape(-1, 1)
-
-
             next_value = agent.get_value(next_obs).reshape(1, -1)
-            advantages = torch.zeros_like(flat_rewards).to(device)
+            advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
-            for t in reversed(range(args.num_steps)):
+            num_steps = rewards.shape[0]
+
+            indices = (np.arange(buffer_size) + buffer_pos) % buffer_size
+
+            for t in reversed(indices):
                 if t == args.num_steps - 1:
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
                 else:
-                    nextnonterminal = 1.0 - flat_dones[t + 1]
-                    nextvalues = flat_values[t + 1]
-                delta = flat_rewards[t] + args.gamma * nextvalues * nextnonterminal - flat_values[t]
+                    nextnonterminal = 1.0 - dones[t + 1]
+                    nextvalues = values[t + 1]
+                delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
-
-            returns = returns.reshape(history_k, -1, 1)
-            advantages = advantages.reshape(history_k, -1, 1)
 
         update_ppo(args, obs, logprobs, actions, advantages, returns, values, writer)
 
