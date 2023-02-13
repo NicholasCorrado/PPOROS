@@ -51,7 +51,7 @@ def parse_args():
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
 
-    parser.add_argument("--eval-freq", type=int, default=5, help="evaluate target and ros policy every eval_freq updates")
+    parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="results will be saved to <results_dir>/<env_id>/<subdir>/")
@@ -191,10 +191,6 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     var_y = np.var(y_true)
     explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-    y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-    var_y = np.var(y_true)
-    explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-
     # TRY NOT TO MODIFY: record rewards for plotting purposes
     writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
     writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
@@ -283,6 +279,7 @@ def main():
     save_dir = f"{args.results_dir}/{args.env_id}/{args.results_subdir}/ppo_ros"
     run_id = get_latest_run_id(save_dir=save_dir) + 1
     save_dir += f"/run_{run_id}"
+    print(f'Results will be saved to {save_dir}')
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)

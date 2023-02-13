@@ -50,7 +50,7 @@ def parse_args():
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
 
-    parser.add_argument("--eval-freq", type=int, default=5, help="evaluate target and ros policy every eval_freq updates")
+    parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="results will be saved to <results_dir>/<env_id>/<subdir>/")
@@ -129,7 +129,7 @@ if __name__ == "__main__":
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
-    save_dir = f"{args.results_dir}/{args.env_id}/{args.results_subdir}/ppo_ros"
+    save_dir = f"{args.results_dir}/{args.env_id}/{args.results_subdir}/ppo"
     run_id = get_latest_run_id(save_dir=save_dir) + 1
     save_dir += f"/run_{run_id}"
 
