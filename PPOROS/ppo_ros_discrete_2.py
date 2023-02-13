@@ -136,15 +136,15 @@ class Agent(nn.Module):
         action = probs.sample()
         return action
 
-def update_ppo(args, obs, logprobs, actions, advantages, returns, values, writer):
+def update_ppo(args, global_step, obs, logprobs, actions, advantages, returns, values, writer):
 
     # flatten the batch
-    b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
-    b_logprobs = logprobs.reshape(-1)
-    b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
-    b_advantages = advantages.reshape(-1)
-    b_returns = returns.reshape(-1)
-    b_values = values.reshape(-1)
+    b_obs = obs[:global_step].reshape((-1,) + envs.single_observation_space.shape)
+    b_logprobs = logprobs[:global_step].reshape(-1)
+    b_actions = actions[:global_step].reshape((-1,) + envs.single_action_space.shape)
+    b_advantages = advantages[:global_step].reshape(-1)
+    b_returns = returns[:global_step].reshape(-1)
+    b_values = values[:global_step].reshape(-1)
 
     # Optimizing the policy and value network
     b_inds = np.arange(args.batch_size)
@@ -297,6 +297,10 @@ if __name__ == "__main__":
     next_obs = torch.Tensor(envs.reset()).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
+    num_updates = 10
+
+    obs_dim = envs.single_observation_space.shape[0]
+    action_dim = 1
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
@@ -331,6 +335,13 @@ if __name__ == "__main__":
                     # writer.add_scalar("charts/episodic_length", item["episode"]["l"], global_step)
                     break
 
+        # if update > history_k:
+        # update values and logprobs
+        with torch.no_grad():
+            _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
+            values = new_value
+            logprobs = new_logprob.reshape(-1,1)
+
         # bootstrap value if not done
         with torch.no_grad():
             next_value = agent.get_value(next_obs).reshape(1, -1)
@@ -338,10 +349,13 @@ if __name__ == "__main__":
             lastgaelam = 0
             num_steps = rewards.shape[0]
 
-            indices = (np.arange(buffer_size) + buffer_pos) % buffer_size
+            if global_step < buffer_size:
+                indices = np.arange(buffer_pos)
+            else:
+                indices = (np.arange(buffer_size) + buffer_pos) % buffer_size
 
             for t in reversed(indices):
-                if t == args.num_steps - 1:
+                if t == num_steps - 1:
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
                 else:
@@ -351,9 +365,10 @@ if __name__ == "__main__":
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-        update_ppo(args, obs, logprobs, actions, advantages, returns, values, writer)
+        if update % history_k == 0:
+            update_ppo(args, global_step, obs, logprobs, actions, advantages, returns, values, writer)
 
-        if update % 5 == 0:
+        if update % history_k == 0:
             current_time = time.time()-start_time
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
             eval_module.evaluate_old_gym(global_step)
