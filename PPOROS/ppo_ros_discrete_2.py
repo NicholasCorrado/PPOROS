@@ -1,6 +1,7 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
 
 import argparse
+import copy
 import os
 import random
 import time
@@ -136,7 +137,7 @@ class Agent(nn.Module):
         action = probs.sample()
         return action
 
-def update_ppo(args, global_step, obs, logprobs, actions, advantages, returns, values, writer):
+def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
 
     # flatten the batch
     b_obs = obs[:global_step].reshape((-1,) + envs.single_observation_space.shape)
@@ -223,9 +224,9 @@ def update_ppo(args, global_step, obs, logprobs, actions, advantages, returns, v
     writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
     writer.add_scalar("losses/explained_variance", explained_var, global_step)
     # print("SPS:", int(global_step / (time.time() - start_time)))
-    writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+    # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-def update_ros(args, global_step, agent_ros, envs, optimizer_ros, obs, logprobs, actions):
+def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size):
 
     # flatten the batch
     if global_step < buffer_size:
@@ -280,14 +281,10 @@ def update_ros(args, global_step, agent_ros, envs, optimizer_ros, obs, logprobs,
                 break
 
 
-    return pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs
-
-
-
-if __name__ == "__main__":
+def main():
     args = parse_args()
     if args.seed is None:
-        args.seed = np.random.randint(2**32-1)
+        args.seed = np.random.randint(2 ** 32 - 1)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
         import wandb
@@ -324,35 +321,34 @@ if __name__ == "__main__":
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    save_dir = f"results/{args.env_id}/ppo"
+    args.learning_rate_ros = args.learning_rate/10
+    agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
+    optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.learning_rate_ros, eps=1e-5)
+
+    save_dir = f"results/{args.env_id}/ppo_ros"
     run_id = get_latest_run_id(save_dir=save_dir) + 1
     save_dir += f"/run_{run_id}"
 
     eval_envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name) for i in range(1)]
+        [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name) for i in range(args.num_envs)]
     )
     eval_module = Evaluate(model=agent, eval_env=eval_envs, n_eval_episodes=50, log_path=save_dir, device=device)
 
-    # Save config
-    with open(os.path.join(save_dir, "config.yml"), "w") as f:
-        yaml.dump(args, f, sort_keys=True)
+    eval_envs_ros = gym.vector.SyncVectorEnv(
+        [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name) for i in range(args.num_envs)]
+    )
+    eval_module_ros = Evaluate(model=agent_ros, eval_env=eval_envs, n_eval_episodes=50, log_path=save_dir,
+                               device=device, suffix='ros')
 
     # ALGO Logic: Storage setup
-    history_k = 2
+    history_k = 4
     buffer_size = history_k * args.num_steps
-    args.batch_size = int(args.num_envs * args.num_steps)*history_k
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
 
     # ALGO Logic: Storage setup
-    obs = torch.zeros((buffer_size, args.num_envs) + envs.single_observation_space.shape).to(device)
-    actions = torch.zeros((buffer_size, args.num_envs) + envs.single_action_space.shape).to(device)
-    logprobs = torch.zeros((buffer_size, args.num_envs)).to(device)
-    rewards = torch.zeros((buffer_size, args.num_envs)).to(device)
-    dones = torch.zeros((buffer_size, args.num_envs)).to(device)
-    values = torch.zeros((buffer_size, args.num_envs)).to(device)
-    returns = torch.zeros((buffer_size, args.num_envs)).to(device)
-    advantages = torch.zeros((buffer_size, args.num_envs)).to(device)
-    timesteps = torch.zeros((buffer_size, args.num_envs)).to(device)
+    obs_buffer = torch.zeros((buffer_size, args.num_envs) + envs.single_observation_space.shape).to(device)
+    actions_buffer = torch.zeros((buffer_size, args.num_envs) + envs.single_action_space.shape).to(device)
+    rewards_buffer = torch.zeros((buffer_size, args.num_envs)).to(device)
+    dones_buffer = torch.zeros((buffer_size, args.num_envs)).to(device)
 
     buffer_pos = 0
 
@@ -375,19 +371,17 @@ if __name__ == "__main__":
 
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
-            obs[buffer_pos] = next_obs
-            dones[buffer_pos] = next_done
+            obs_buffer[buffer_pos] = next_obs
+            dones_buffer[buffer_pos] = next_done
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs)
-                values[buffer_pos] = value.flatten()
-            actions[buffer_pos] = action
-            logprobs[buffer_pos] = logprob
+                action, _, _, _ = agent_ros.get_action_and_value(next_obs)
+                actions_buffer[buffer_pos] = action
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, done, info = envs.step(action.cpu().numpy())
-            rewards[buffer_pos] = torch.tensor(reward).to(device).view(-1)
+            rewards_buffer[buffer_pos] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
 
             buffer_pos += 1
@@ -398,6 +392,20 @@ if __name__ == "__main__":
                     writer.add_scalar("charts/episodic_return", item["episode"]["r"], global_step)
                     # writer.add_scalar("charts/episodic_length", item["episode"]["l"], global_step)
                     break
+
+
+        # Reorder the replay data so that the most new data is at the back.
+        # We do this to avoid modifying existing the CleanRL PPO update code, which assumes buffer[0] is the oldest transition
+        # We copy the replay data for clarity. There's a more efficient way to do.
+        if global_step < buffer_size:
+            indices = np.arange(buffer_pos)
+        else:
+            indices = (np.arange(buffer_size) + buffer_pos) % buffer_size
+
+        obs = obs_buffer.clone()[indices]
+        actions = actions_buffer.clone()[indices]
+        rewards = rewards_buffer.clone()[indices]
+        dones = dones_buffer.clone()[indices]
 
         # update values and logprobs
         with torch.no_grad():
@@ -410,14 +418,10 @@ if __name__ == "__main__":
             next_value = agent.get_value(next_obs).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
-            num_steps = rewards.shape[0]
 
-            if global_step < buffer_size:
-                indices = np.arange(buffer_pos)
-            else:
-                indices = (np.arange(buffer_size) + buffer_pos) % buffer_size
+            num_steps = indices.shape[0]
 
-            for t in reversed(indices):
+            for t in reversed(range(num_steps)):
                 if t == num_steps - 1:
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
@@ -428,12 +432,20 @@ if __name__ == "__main__":
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-        update_ppo(args, global_step, obs, logprobs, actions, advantages, returns, values, writer)
+        update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+
+        for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
+            source_param.data.copy_(dump_param.data)
+
+        update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size)
 
         if update % 5 == 0:
-            current_time = time.time()-start_time
+            current_time = time.time() - start_time
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
             eval_module.evaluate_old_gym(global_step)
 
     envs.close()
     writer.close()
+
+if __name__ == "__main__":
+    main()
