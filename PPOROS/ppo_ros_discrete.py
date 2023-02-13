@@ -365,9 +365,7 @@ def main():
             buffer_pos %= buffer_size
             for item in info:
                 if "episode" in item.keys():
-                    # print(f"global_step={global_step}, episodic_return={item['episode']['r']}")
                     writer.add_scalar("charts/episodic_return", item["episode"]["r"], global_step)
-                    # writer.add_scalar("charts/episodic_length", item["episode"]["l"], global_step)
                     break
 
         # Reorder the replay data so that the most new data is at the back.
@@ -383,13 +381,13 @@ def main():
         rewards = rewards_buffer.clone()[indices]
         dones = dones_buffer.clone()[indices]
 
-        # recompute value estimates and logprobs
+        # Compute value estimates and logprobs
         with torch.no_grad():
             _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
             values = new_value
             logprobs = new_logprob.reshape(-1, 1)
 
-        # bootstrap value if not done
+        # Compute returns and advantages -- bootstrap value if not done
         with torch.no_grad():
             next_value = agent.get_value(next_obs).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
