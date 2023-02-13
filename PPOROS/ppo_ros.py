@@ -1,5 +1,6 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy
 import argparse
+import copy
 import os
 import random
 import time
@@ -12,6 +13,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
+
+from PPOROS.evaluate import Evaluate
 
 
 def parse_args():
@@ -107,11 +110,11 @@ class Agent(nn.Module):
         probs = Normal(action_mean, action_std)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
+        return action, probs.log_prob(action).sum(-1), probs.entropy().sum(-1), self.critic(x)
 
-def log_statistics(writer, v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var):
+def log_statistics(global_step, writer, v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var):
     # TRY NOT TO MODIFY: record rewards for plotting purposes
-    writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+    # writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
     writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
     writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
     writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
@@ -119,24 +122,43 @@ def log_statistics(writer, v_loss, pg_loss, entropy_loss, old_approx_kl, approx_
     writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
     writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
     writer.add_scalar("losses/explained_variance", explained_var, global_step)
-    print("SPS:", int(global_step / (time.time() - start_time)))
-    writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+    # print("SPS:", int(global_step / (time.time() - start_time)))
+    # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-    if args.track and args.capture_video:
-        for filename in os.listdir(f"videos/{run_name}"):
-            if filename not in video_filenames and filename.endswith(".mp4"):
-                wandb.log({f"videos": wandb.Video(f"videos/{run_name}/{filename}")})
-                video_filenames.add(filename)
+    # if args.track and args.capture_video:
+    #     for filename in os.listdir(f"videos/{run_name}"):
+    #         if filename not in video_filenames and filename.endswith(".mp4"):
+    #             wandb.log({f"videos": wandb.Video(f"videos/{run_name}/{filename}")})
+    #             video_filenames.add(filename)
 
-def update_ppo(args, obs, logprobs, actions, advantages, returns, values):
+def log_statistics_ros(global_step, writer, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs):
+    # TRY NOT TO MODIFY: record rewards for plotting purposes
+    # writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+    writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
+    writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
+    writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
+    writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
+    writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
+    # writer.add_scalar("losses/explained_variance", explained_var, global_step)
+    # print("SPS:", int(global_step / (time.time() - start_time)))
+    # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+    # if args.track and args.capture_video:
+    #     for filename in os.listdir(f"videos/{run_name}"):
+    #         if filename not in video_filenames and filename.endswith(".mp4"):
+    #             wandb.log({f"videos": wandb.Video(f"videos/{run_name}/{filename}")})
+    #             video_filenames.add(filename)
+
+def update_ppo(args, envs, agent, optimizer, obs, actions, advantages, returns):
 
     # flatten the batch
     b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
-    b_logprobs = logprobs.reshape(-1)
     b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
     b_advantages = advantages.reshape(-1)
     b_returns = returns.reshape(-1)
-    b_values = values.reshape(-1)
+
+    with torch.no_grad():
+        _, b_logprobs, _, b_values = agent.get_action_and_value(b_obs, b_actions)
 
     # Optimizing the policy and value network
     b_inds = np.arange(args.batch_size)
@@ -200,10 +222,65 @@ def update_ppo(args, obs, logprobs, actions, advantages, returns, values):
 
     return v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var
 
-if __name__ == "__main__":
+
+def update_ros(args, agent_ros, envs, optimizer_ros, obs, logprobs, actions, returns):
+    # update historic values and logprobs
+    with torch.no_grad():
+        for j in range(2):
+            # if j == buffer_epoch_index: continue
+            _, new_logprob, _, new_value = agent_ros.get_action_and_value(obs[j].reshape(-1, 4), actions[j].reshape(-1, 1))
+            logprobs[j] = new_logprob.reshape(-1, 1)
+
+    # flatten the batch
+    b_obs = obs[:-1].reshape((-1,) + envs.single_observation_space.shape)
+    b_logprobs = logprobs[:-1].reshape(-1)
+    b_actions = actions[:-1].reshape((-1,) + envs.single_action_space.shape)
+    b_returns = returns[:-1].reshape(-1)
+
+    # Optimizing the policy and value network
+    b_inds = np.arange(args.batch_size)
+    clipfracs = []
+
+    for epoch in range(args.update_epochs):
+        np.random.shuffle(b_inds)
+        for start in range(0, args.batch_size, args.minibatch_size):
+            end = start + args.minibatch_size
+            mb_inds = b_inds[start:end]
+
+            _, newlogprob, entropy, _ = agent_ros.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+            logratio = newlogprob - b_logprobs[mb_inds]
+            ratio = logratio.exp()
+
+            with torch.no_grad():
+                # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                old_approx_kl = (-logratio).mean()
+                approx_kl = ((ratio - 1) - logratio).mean()
+                clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+
+            # Policy loss
+            pg_loss1 = ratio
+            pg_loss2 = torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+            pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+            entropy_loss = entropy.mean()
+            loss = pg_loss - args.ent_coef * entropy_loss
+
+            optimizer_ros.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(agent_ros.parameters(), args.max_grad_norm)
+            optimizer_ros.step()
+
+        if args.target_kl is not None:
+            if approx_kl > args.target_kl:
+                break
+
+
+    return pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs
+
+def main():
     args = parse_args()
     if args.seed is None:
-        args.seed = np.random.randint(2**32-1)
+        args.seed = np.random.randint(2 ** 32 - 1)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
         import wandb
@@ -240,22 +317,35 @@ if __name__ == "__main__":
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
+    agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
+    optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.learning_rate * 1, eps=1e-5)
+
+    history_k = 1
+    # buffer_size = history_k * args.num_steps
+    # args.minibatch_size *= history_k
+
     # ALGO Logic: Storage setup
-    obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    obs = torch.zeros((history_k, args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
+    obs_p = torch.zeros((history_k, args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
+    actions = torch.zeros((history_k, args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
+    logprobs = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    rewards = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    dones = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    values = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
+    returns = torch.zeros((history_k, args.num_steps, args.num_envs)).to(device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
+    global_epoch = 0
     start_time = time.time()
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
     video_filenames = set()
+
+    obs_dim = 4
+    action_dim = 1
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
@@ -264,23 +354,30 @@ if __name__ == "__main__":
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
+        global_epoch += 1
+        buffer_epoch_index = (global_epoch - 1) % history_k
+
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
-            obs[step] = next_obs
-            dones[step] = next_done
+            obs[buffer_epoch_index, step] = next_obs
+            dones[buffer_epoch_index, step] = next_done
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
                 action, logprob, _, value = agent.get_action_and_value(next_obs)
-                values[step] = value.flatten()
-            actions[step] = action
-            logprobs[step] = logprob
+                # action, _, _, _ = agent_ros.get_action_and_value(next_obs)
+                _, logprob, _, value = agent.get_action_and_value(next_obs, action)
+                values[buffer_epoch_index, step] = value.flatten()
+            actions[buffer_epoch_index, step] = action
+            logprobs[buffer_epoch_index, step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminated, truncated, infos = envs.step(action.cpu().numpy())
             done = np.logical_or(terminated, truncated)
-            rewards[step] = torch.tensor(reward).to(device).view(-1)
+            rewards[buffer_epoch_index, step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
+            obs_p[buffer_epoch_index, step] = next_obs
+
 
             # Only print when at least 1 env is done
             if "final_info" not in infos:
@@ -292,28 +389,64 @@ if __name__ == "__main__":
                     continue
                 print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+                # writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+
+        # update historic values and logprobs
+        with torch.no_grad():
+            for j in range(history_k):
+                # if j == buffer_epoch_index: continue
+                _, new_logprob, _, new_value = agent.get_action_and_value(obs[j].reshape(-1, obs_dim), actions[j].reshape(-1, action_dim))
+                values[j] = new_value
+                logprobs[j] = new_logprob.reshape(-1,1)
 
         # bootstrap value if not done
         with torch.no_grad():
-            next_value = agent.get_value(next_obs).reshape(1, -1)
-            advantages = torch.zeros_like(rewards).to(device)
-            lastgaelam = 0
-            for t in reversed(range(args.num_steps)):
-                if t == args.num_steps - 1:
-                    nextnonterminal = 1.0 - next_done
-                    nextvalues = next_value
+            for j in range(history_k):
+                epoch_rewards = rewards[j]
+                epoch_values = values[j]
+                epoch_dones = dones[j]
+
+                lastgaelam = 0
+                advantages = torch.zeros_like(epoch_rewards).to(device)
+                if j == buffer_epoch_index:
+                    next_value = agent.get_value(next_obs).reshape(1, -1)
+                    next_done = next_done
                 else:
-                    nextnonterminal = 1.0 - dones[t + 1]
-                    nextvalues = values[t + 1]
-                delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-            returns = advantages + values
+                    next_value = agent.get_value(obs[(j+1) % history_k, 0]).reshape(1, -1)
+                    next_done = dones[(j+1) % history_k, 0]
+
+                for t in reversed(range(args.num_steps)):
+                    if t == args.num_steps - 1:
+                        nextnonterminal = 1.0 - next_done
+                        nextvalues = next_value
+                    else:
+                        nextnonterminal = 1.0 - epoch_dones[t + 1]
+                        nextvalues = epoch_values[t + 1]
+
+                    delta = epoch_rewards[t] + args.gamma * nextvalues * nextnonterminal - epoch_values[t]
+                    advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+            returns[j] = advantages + epoch_values
 
         v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var = \
-            update_ppo(args, obs, logprobs, actions, advantages, returns, values)
+            update_ppo(args, envs, agent, optimizer, obs, actions, advantages, returns)
 
-        log_statistics(writer, v_loss, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs, explained_var)
+        # for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
+        #     source_param.data.copy_(dump_param.data)
+
+        # pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs = \
+        #     update_ros(args, agent_ros, envs, optimizer_ros, obs, logprobs, actions, returns)
+        #
+        # log_statistics_ros(global_step, writer, pg_loss, entropy_loss, old_approx_kl, approx_kl, clipfracs)
+
+        # _, logprob, _, _ = agent.get_action_and_value(obs.reshape(-1,4), action.reshape(-1,1))
+        # _, logprob_ros, _, _ = agent.get_action_and_value(obs.reshape(-1,4), action.reshape(-1,1))
+        if global_step % 10000 == 0:
+            current_time = time.time()-start_time
+            print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
+            eval_module.evaluate(global_step)
 
     envs.close()
     writer.close()
+
+if __name__ == "__main__":
+  main()

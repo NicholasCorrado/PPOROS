@@ -41,6 +41,7 @@ class Evaluate:
         n_eval_episodes: int = 5,
         eval_freq: int = 10000,
         log_path: str = None,
+        suffix: str = '',
         best_model_save_path: str = None,
         deterministic: bool = True,
         device=None,
@@ -55,11 +56,15 @@ class Evaluate:
         self.model = model
         self.eval_env = eval_env
         self.best_model_save_path = log_path
+        self.suffix = suffix
 
         # Logs will be written in ``evaluations.npz``
         os.makedirs(name=log_path, exist_ok=True)
         if log_path is not None:
-            self.log_path = os.path.join(log_path, "evaluations")
+            if self.suffix != '':
+                self.log_path = os.path.join(log_path, f"evaluations_{suffix}")
+            else:
+                self.log_path = os.path.join(log_path, f"evaluations")
         self.evaluations_returns = []
         self.evaluations_timesteps = []
         self.evaluations_successes = []
@@ -109,7 +114,8 @@ class Evaluate:
                 step += 1
                 # ALGO LOGIC: put action logic here
                 with torch.no_grad():
-                    actions = self.model(torch.Tensor(obs).to(self.device))
+                    actions = self.model.get_action(torch.Tensor(obs).to(self.device))
+                    # actions = self.model(torch.Tensor(obs).to(self.device))
                     actions = actions.cpu().numpy().clip(self.eval_env.single_action_space.low, self.eval_env.single_action_space.high)
     
                 # TRY NOT TO MODIFY: execute the game and log data.
@@ -126,4 +132,68 @@ class Evaluate:
             eval_successes.append(np.sum(ep_successes)*100)
 
         return eval_returns, eval_successes
-            
+
+    def evaluate_old_gym(self, t):
+        # if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
+        returns, successes = self._evaluate_old_gym()
+
+        if self.log_path is not None:
+            self.evaluations_timesteps.append(t)
+            self.evaluations_returns.append(returns)
+            self.evaluations_successes.append(successes)
+
+            np.savez(
+                self.log_path,
+                timesteps=self.evaluations_timesteps,
+                returns=self.evaluations_returns,
+                successes=self.evaluations_successes,
+            )
+
+            mean_reward, std_reward = np.mean(returns), np.std(returns)
+            mean_success, std_success = np.mean(successes), np.std(successes)
+
+            self.last_mean_reward = mean_reward
+
+            print(f"Eval num_timesteps={t}, " f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}")
+            print(f"Eval num_timesteps={t}, " f"episode_success={mean_success:.2f} +/- {std_success:.2f}")
+
+
+            if mean_reward > self.best_mean_reward:
+                print("New best mean reward!")
+                if self.suffix != '':
+                    torch.save(self.model, os.path.join(self.best_model_save_path, f"best_model_{self.suffix}"))
+                else:
+                    torch.save(self.model, os.path.join(self.best_model_save_path, f"best_model"))
+                self.best_mean_reward = mean_reward
+
+    def _evaluate_old_gym(self):
+        eval_returns = []
+        eval_successes = []
+
+        obs = self.eval_env.reset()
+        for episode_i in range(self.n_eval_episodes):
+            ep_returns = []
+            ep_successes = []
+            done = False
+            step = 0
+            while not done:
+                step += 1
+                # ALGO LOGIC: put action logic here
+                with torch.no_grad():
+                    actions = self.model.get_action(torch.Tensor(obs).to(self.device))
+                    # actions = self.model(torch.Tensor(obs).to(self.device))
+                    # actions = actions.cpu().numpy().clip(self.eval_env.single_action_space.low,
+                    #                                      self.eval_env.single_action_space.high)
+
+                # TRY NOT TO MODIFY: execute the game and log data.
+                next_obs, rewards, done, infos = self.eval_env.step(actions.numpy())
+
+                # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
+                obs = next_obs
+
+                ep_returns.append(rewards[0])
+
+            eval_returns.append(np.sum(ep_returns))
+            eval_successes.append(np.sum(ep_successes) * 100)
+
+        return eval_returns, eval_successes
