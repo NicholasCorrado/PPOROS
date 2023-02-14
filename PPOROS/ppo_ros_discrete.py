@@ -35,9 +35,10 @@ def parse_args():
     parser.add_argument("--env-id", type=str, default="CartPole-v1", help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=100000, help="total timesteps of the experiments")
     parser.add_argument("--learning-rate", "-lr", type=float, default=2.5e-4, help="the learning rate of the optimizer")
-    parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=2.5e-4, help="the learning rate of the ROS optimizer")
+    parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=2.5e-5, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=128, help="the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--buffer-history", "-b", type=int, default=4, help="Number of prior collect phases to store in buffer")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -47,6 +48,7 @@ def parse_args():
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
     parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
+    parser.add_argument("--ent-coef-ros", type=float, default=0.01, help="coefficient of the entropy in ros update")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
@@ -234,7 +236,7 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             entropy_loss = entropy.mean()
-            loss = pg_loss - args.ent_coef * entropy_loss
+            loss = pg_loss - args.ent_coef_ros * entropy_loss
 
             optimizer_ros.zero_grad()
             loss.backward()
@@ -277,7 +279,6 @@ def main():
 
     # ROS behavior agent
     agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
-    args.learning_rate_ros = args.learning_rate/5
     optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.learning_rate_ros, eps=1e-5)
 
     # Evaluation modules

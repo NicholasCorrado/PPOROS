@@ -7,6 +7,7 @@ conda create -n ppo-ros python=3.9
 conda activate ppo-ros
 pip install -e PPOROS
 
+conda install pytorch cpuonly -c pytorch
 conda install stable-baselines3
 conda install tensorboard
 conda install mujoco
