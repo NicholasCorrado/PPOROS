@@ -296,7 +296,7 @@ def main():
     eval_module_ros = Evaluate(model=agent_ros, eval_env=eval_envs_ros, n_eval_episodes=args.eval_episodes, log_path=save_dir, device=device, suffix='ros')
 
     # ALGO Logic: Storage setup
-    history_k = 4
+    history_k = args.buffer_history
     buffer_size = history_k * args.num_steps
 
     # ALGO Logic: Storage setup
