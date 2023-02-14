@@ -34,11 +34,11 @@ def parse_args():
 
     # Algorithm specific arguments
     parser.add_argument("--env-id", type=str, default="CartPole-v1", help="the id of the environment")
-    parser.add_argument("--total-timesteps", type=int, default=100000, help="total timesteps of the experiments")
-    parser.add_argument("--learning-rate", "-lr", type=float, default=2.5e-4, help="the learning rate of the optimizer")
-    parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=2.5e-5, help="the learning rate of the ROS optimizer")
+    parser.add_argument("--total-timesteps", type=int, default=500000, help="total timesteps of the experiments")
+    parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
+    parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=128, help="the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--buffer-history", "-b", type=int, default=4, help="Number of prior collect phases to store in buffer")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
@@ -49,10 +49,11 @@ def parse_args():
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
     parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
-    parser.add_argument("--ent-coef-ros", type=float, default=0.0, help="coefficient of the entropy in ros update")
+    parser.add_argument("--ent-coef-ros", type=float, default=0.01, help="coefficient of the entropy in ros update")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
+    parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
@@ -331,7 +332,10 @@ def main():
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, _, _, _ = agent_ros.get_action_and_value(next_obs)
+                if args.ros:
+                    action, _, _, _ = agent_ros.get_action_and_value(next_obs)
+                else:
+                    action, _, _, _ = agent.get_action_and_value(next_obs)
                 actions_buffer[buffer_pos] = action
 
             # TRY NOT TO MODIFY: execute the game and log data.
@@ -354,6 +358,11 @@ def main():
         actions = actions_buffer.clone()[indices]
         rewards = rewards_buffer.clone()[indices]
         dones = dones_buffer.clone()[indices]
+
+        # obs_buffer = obs_buffer[indices]
+        # actions_buffer = actions_buffer[indices]
+        # rewards_buffer = rewards_buffer[indices]
+        # dones_buffer = dones_buffer[indices]
 
         # Compute value estimates and logprobs
         with torch.no_grad():
@@ -381,12 +390,21 @@ def main():
         # PPO target update
         update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
 
-        # Set ROS policy equal to current target policy
-        for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
-            source_param.data.copy_(dump_param.data)
+        if args.ros:
+            # Set ROS policy equal to current target policy
+            for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
+                source_param.data.copy_(dump_param.data)
 
-        # ROS behavior update
-        update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size, writer)
+            # ROS behavior update
+            update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size, writer)
+
+        # indices_invert = np.empty_like(indices)
+        # indices_invert[indices] = np.arange(indices_invert)
+        # obs = obs_buffer[indices_invert]
+        # actions = actions_buffer[indices_invert]
+        # rewards = rewards_buffer[indices_invert]
+        # dones = dones_buffer[indices_invert]
+
 
         if update % args.eval_freq == 0:
             current_time = time.time() - start_time
