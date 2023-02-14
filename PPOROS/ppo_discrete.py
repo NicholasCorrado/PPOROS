@@ -13,7 +13,6 @@ import torch.nn as nn
 import torch.optim as optim
 import yaml
 from torch.distributions.categorical import Categorical
-from torch.utils.tensorboard import SummaryWriter
 
 from PPOROS.evaluate import Evaluate
 from PPOROS.utils import get_latest_run_id
