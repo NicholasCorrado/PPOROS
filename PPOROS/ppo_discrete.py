@@ -23,6 +23,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"), help="the name of this experiment")
     parser.add_argument("--seed", type=int, default=None, help="seed of the experiment")
+    parser.add_argument("--run-id", type=int, default=None)
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, cuda will be enabled by default")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="if toggled, this experiment will be tracked with Weights and Biases")
@@ -125,8 +126,12 @@ if __name__ == "__main__":
     writer = None
 
     save_dir = f"{args.results_dir}/{args.env_id}/{args.results_subdir}/ppo"
-    run_id = get_latest_run_id(save_dir=save_dir) + 1
-    save_dir += f"/run_{run_id}"
+    if args.run_id:
+        save_dir += f"/run_{args.run_id}"
+    else:
+        run_id = get_latest_run_id(save_dir=save_dir) + 1
+        save_dir += f"/run_{run_id}"
+    print(f'Results will be saved to {save_dir}')
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
