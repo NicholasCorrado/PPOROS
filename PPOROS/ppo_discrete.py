@@ -132,6 +132,9 @@ if __name__ == "__main__":
         run_id = get_latest_run_id(save_dir=save_dir) + 1
         save_dir += f"/run_{run_id}"
     print(f'Results will be saved to {save_dir}')
+    # Save config
+    with open(os.path.join(save_dir, "config.yml"), "w") as f:
+        yaml.dump(args, f, sort_keys=True)
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)

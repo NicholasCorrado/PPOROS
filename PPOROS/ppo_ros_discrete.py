@@ -148,6 +148,10 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
 
 def main():
     args = parse_args()
+    # Save config
+    with open(os.path.join(args.save_dir, "config.yml"), "w") as f:
+        yaml.dump(args, f, sort_keys=True)
+
     writer = None
 
     print(f'Results will be saved to {args.save_dir}')
