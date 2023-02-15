@@ -63,10 +63,10 @@ def make_env(env_id, idx, capture_video, run_name, gamma):
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         env = gym.wrappers.ClipAction(env)
-        env = gym.wrappers.NormalizeObservation(env)
-        env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        env = gym.wrappers.NormalizeReward(env, gamma=gamma)
-        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+        # env = gym.wrappers.NormalizeObservation(env)
+        # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
+        # env = gym.wrappers.NormalizeReward(env, gamma=gamma)
+        # env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         return env
 
     return thunk
@@ -109,7 +109,9 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
 
-def update_ppo():
+
+def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
+
     # flatten the batch
     b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
     b_logprobs = logprobs.reshape(-1)
@@ -119,12 +121,15 @@ def update_ppo():
     b_values = values.reshape(-1)
 
     # Optimizing the policy and value network
-    b_inds = np.arange(args.batch_size)
+    batch_size = b_obs.shape[0]
+    minibatch_size = int(batch_size // args.num_minibatches)
+
+    b_inds = np.arange(batch_size)
     clipfracs = []
     for epoch in range(args.update_epochs):
         np.random.shuffle(b_inds)
-        for start in range(0, args.batch_size, args.minibatch_size):
-            end = start + args.minibatch_size
+        for start in range(0, batch_size, minibatch_size):
+            end = start + minibatch_size
             mb_inds = b_inds[start:end]
 
             _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
@@ -177,8 +182,7 @@ def update_ppo():
     var_y = np.var(y_true)
     explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-
-if __name__ == "__main__":
+def main():
     args = parse_args()
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
@@ -216,11 +220,15 @@ if __name__ == "__main__":
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
+    history_k = 2
+    buffer_size = history_k * args.num_steps
+    buffer_pos = 0
     # ALGO Logic: Storage setup
-    obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    # ALGO Logic: Storage setup
+    obs_buffer = torch.zeros((buffer_size, args.num_envs) + envs.single_observation_space.shape).to(device)
+    actions_buffer = torch.zeros((buffer_size, args.num_envs) + envs.single_action_space.shape).to(device)
+    rewards_buffer = torch.zeros((buffer_size, args.num_envs)).to(device)
+    dones_buffer = torch.zeros((buffer_size, args.num_envs)).to(device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -236,26 +244,29 @@ if __name__ == "__main__":
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
-        if args.anneal_lr:
-            frac = 1.0 - (update - 1.0) / num_updates
-            lrnow = frac * args.learning_rate
-            optimizer.param_groups[0]["lr"] = lrnow
+        # if args.anneal_lr:
+        #     frac = 1.0 - (update - 1.0) / num_updates
+        #     lrnow = frac * args.learning_rate
+        #     optimizer.param_groups[0]["lr"] = lrnow
 
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
-            obs[step] = next_obs
-            dones[step] = next_done
+            obs_buffer[buffer_pos] = next_obs
+            dones_buffer[buffer_pos] = next_done
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs)
-            actions[step] = action
+                action, _, _, _ = agent.get_action_and_value(next_obs)
+            actions_buffer[buffer_pos] = action
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminated, truncated, infos = envs.step(action.cpu().numpy())
             done = np.logical_or(terminated, truncated)
-            rewards[step] = torch.tensor(reward).to(device).view(-1)
+            rewards_buffer[buffer_pos] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
+
+            buffer_pos += 1
+            buffer_pos %= buffer_size
 
             # Only print when at least 1 env is done
             if "final_info" not in infos:
@@ -269,18 +280,30 @@ if __name__ == "__main__":
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                 writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
+        if global_step < buffer_size:
+            indices = np.arange(buffer_pos)
+        else:
+            indices = (np.arange(buffer_size) + buffer_pos) % buffer_size
+
+        obs = obs_buffer.clone()[indices]
+        actions = actions_buffer.clone()[indices]
+        rewards = rewards_buffer.clone()[indices]
+        dones = dones_buffer.clone()[indices]
+
         with torch.no_grad():
             _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
             values = new_value
             logprobs = new_logprob.reshape(-1, 1)
 
         # bootstrap value if not done
+        # Compute returns and advantages -- bootstrap value if not done
         with torch.no_grad():
             next_value = agent.get_value(next_obs).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
-            for t in reversed(range(args.num_steps)):
-                if t == args.num_steps - 1:
+            num_steps = indices.shape[0]
+            for t in reversed(range(num_steps)):
+                if t == num_steps - 1:
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
                 else:
@@ -290,6 +313,11 @@ if __name__ == "__main__":
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-        update_ppo()
+        # update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+        if update % 2 == 0:
+            update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
     envs.close()
     writer.close()
+
+if __name__ == "__main__":
+    main()
