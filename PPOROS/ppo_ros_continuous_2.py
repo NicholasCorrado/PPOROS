@@ -1,5 +1,6 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy
 import argparse
+import copy
 import os
 import random
 import time
@@ -10,8 +11,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from gymnasium.wrappers.normalize import RunningMeanStd
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
+
+from PPOROS.ppo_ros_discrete import update_ros
 
 
 def parse_args():
@@ -31,7 +35,7 @@ def parse_args():
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="total timesteps of the experiments")
     parser.add_argument("--learning-rate", type=float, default=3e-4, help="the learning rate of the optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=128, help="the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -182,6 +186,60 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     var_y = np.var(y_true)
     explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
+def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size, writer):
+
+    # flatten the batch
+    if global_step < buffer_size:
+        end = global_step
+    else:
+        end = -args.num_steps
+
+    # flatten the batch
+    b_obs = obs[:end].reshape((-1,) + envs.single_observation_space.shape)
+    b_logprobs = logprobs[:end].reshape(-1)
+    b_actions = actions[:end].reshape((-1,) + envs.single_action_space.shape)
+
+    # Optimizing the policy and value network
+    batch_size = b_obs.shape[0]
+    minibatch_size = int(batch_size // args.num_minibatches)
+
+    # Optimizing the policy and value network
+    b_inds = np.arange(batch_size)
+    clipfracs = []
+
+    for epoch in range(args.update_epochs):
+        np.random.shuffle(b_inds)
+        for start in range(0, batch_size, minibatch_size):
+            end = start + minibatch_size
+            mb_inds = b_inds[start:end]
+
+            _, newlogprob, entropy, _ = agent_ros.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+            logratio = newlogprob - b_logprobs[mb_inds]
+            ratio = logratio.exp()
+
+            with torch.no_grad():
+                # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                old_approx_kl = (-logratio).mean()
+                approx_kl = ((ratio - 1) - logratio).mean()
+                clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+
+            # Policy loss
+            pg_loss1 = -ratio
+            pg_loss2 = -torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+            pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+            entropy_loss = entropy.mean()
+            loss = pg_loss - args.ent_coef * entropy_loss
+
+            optimizer_ros.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(agent_ros.parameters(), args.max_grad_norm)
+            optimizer_ros.step()
+
+        if args.target_kl is not None:
+            if approx_kl > args.target_kl:
+                break
+
 def main():
     args = parse_args()
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -217,10 +275,16 @@ def main():
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
+    # PPO target agent
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    history_k = 2
+    # ROS behavior agent
+    agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
+    optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.learning_rate/10, eps=1e-5)
+
+
+    history_k = 4
     buffer_size = history_k * args.num_steps
     buffer_pos = 0
     # ALGO Logic: Storage setup
@@ -256,8 +320,12 @@ def main():
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, _, _, _ = agent.get_action_and_value(next_obs)
-            actions_buffer[buffer_pos] = action
+                action, _, _, _ = agent_ros.get_action_and_value(next_obs)
+                # if args.ros:
+                #     action, _, _, _ = agent_ros.get_action_and_value(next_obs)
+                # else:
+                #     action, _, _, _ = agent.get_action_and_value(next_obs)
+                actions_buffer[buffer_pos] = action
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminated, truncated, infos = envs.step(action.cpu().numpy())
@@ -313,9 +381,17 @@ def main():
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-        # update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
-        if update % 2 == 0:
-            update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+        update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+        # if args.ros:
+        # Set ROS policy equal to current target policy
+        for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
+            source_param.data.copy_(dump_param.data)
+
+        # ROS behavior update
+        update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size, writer)
+
+        # if update % 2 == 0:
+        #     update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
     envs.close()
     writer.close()
 
