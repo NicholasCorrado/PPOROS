@@ -10,13 +10,46 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import yaml
-from gymnasium.wrappers.normalize import RunningMeanStd
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
 
-from PPOROS.evaluate import Evaluate
-from PPOROS.utils import get_latest_run_id, parse_args
+
+def parse_args():
+    # fmt: off
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"), help="the name of this experiment")
+    parser.add_argument("--seed", type=int, default=1, help="seed of the experiment")
+    parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, `torch.backends.cudnn.deterministic=False`")
+    parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, cuda will be enabled by default")
+    parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="if toggled, this experiment will be tracked with Weights and Biases")
+    parser.add_argument("--wandb-project-name", type=str, default="cleanRL", help="the wandb's project name")
+    parser.add_argument("--wandb-entity", type=str, default=None, help="the entity (team) of wandb's project")
+    parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="whether to capture videos of the agent performances (check out `videos` folder)")
+
+    # Algorithm specific arguments
+    parser.add_argument("--env-id", type=str, default="InvertedPendulum-v4", help="the id of the environment")
+    parser.add_argument("--total-timesteps", type=int, default=1000000, help="total timesteps of the experiments")
+    parser.add_argument("--learning-rate", type=float, default=3e-4, help="the learning rate of the optimizer")
+    parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
+    parser.add_argument("--num-steps", type=int, default=128, help="the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
+    parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
+    parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
+    parser.add_argument("--num-minibatches", type=int, default=32, help="the number of mini-batches")
+    parser.add_argument("--update-epochs", type=int, default=10, help="the K epochs to update the policy")
+    parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
+    parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
+    parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
+    parser.add_argument("--ent-coef", type=float, default=0.0, help="coefficient of the entropy")
+    parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
+    parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
+    parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
+    args = parser.parse_args()
+    args.batch_size = int(args.num_envs * args.num_steps)
+    args.minibatch_size = int(args.batch_size // args.num_minibatches)
+    # fmt: on
+    return args
+
 
 def make_env(env_id, idx, capture_video, run_name, gamma):
     def thunk():
@@ -38,23 +71,6 @@ def make_env(env_id, idx, capture_video, run_name, gamma):
 
     return thunk
 
-def make_eval_env(env_id, idx, capture_video, run_name, gamma):
-    def thunk():
-        if capture_video:
-            env = gym.make(env_id, render_mode="rgb_array")
-        else:
-            env = gym.make(env_id)
-        env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        if capture_video:
-            if idx == 0:
-                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        env = gym.wrappers.ClipAction(env)
-        env = gym.wrappers.NormalizeObservation(env)
-        env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        return env
-
-    return thunk
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -93,15 +109,7 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
 
-    def get_action(self, x, deterministic=True):
-        action_mean = self.actor_mean(x)
-        # action_logstd = self.actor_logstd.expand_as(action_mean)
-        # action_std = torch.exp(action_logstd)
-        # probs = Normal(action_mean, action_std)
-        return action_mean
-
-def update_ppo(args, obs, logprobs, actions, advantages, returns, values):
-
+def update_ppo():
     # flatten the batch
     b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
     b_logprobs = logprobs.reshape(-1)
@@ -113,7 +121,6 @@ def update_ppo(args, obs, logprobs, actions, advantages, returns, values):
     # Optimizing the policy and value network
     b_inds = np.arange(args.batch_size)
     clipfracs = []
-
     for epoch in range(args.update_epochs):
         np.random.shuffle(b_inds)
         for start in range(0, args.batch_size, args.minibatch_size):
@@ -170,28 +177,9 @@ def update_ppo(args, obs, logprobs, actions, advantages, returns, values):
     var_y = np.var(y_true)
     explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-    # TRY NOT TO MODIFY: record rewards for plotting purposes
-    # writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-    writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-    writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-    writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-    writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-    writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-    writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-    writer.add_scalar("losses/explained_variance", explained_var, global_step)
-    # print("SPS:", int(global_step / (time.time() - start_time)))
-    # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-
-    if args.track and args.capture_video:
-        for filename in os.listdir(f"videos/{run_name}"):
-            if filename not in video_filenames and filename.endswith(".mp4"):
-                wandb.log({f"videos": wandb.Video(f"videos/{run_name}/{filename}")})
-                video_filenames.add(filename)
 
 if __name__ == "__main__":
     args = parse_args()
-    if args.seed is None:
-        args.seed = np.random.randint(2**32-1)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
         import wandb
@@ -228,19 +216,6 @@ if __name__ == "__main__":
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    save_dir = f"results/{args.env_id}/ppo"
-    run_id = get_latest_run_id(save_dir=save_dir) + 1
-    save_dir += f"/run_{run_id}"
-
-    eval_envs = gym.vector.SyncVectorEnv(
-        [make_eval_env(args.env_id, i, args.capture_video, run_name, args.gamma) for i in range(args.num_envs)]
-    )
-    eval_module = Evaluate(model=agent, eval_env=eval_envs, n_eval_episodes=10, log_path=save_dir, device=device)
-
-    # Save config
-    with open(os.path.join(save_dir, "config.yml"), "w") as f:
-        yaml.dump(args, f, sort_keys=True)
-
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
     actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
@@ -258,13 +233,12 @@ if __name__ == "__main__":
     num_updates = args.total_timesteps // args.batch_size
     video_filenames = set()
 
-    # num_updates = 2
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
-        # if args.anneal_lr:
-        #     frac = 1.0 - (update - 1.0) / num_updates
-        #     lrnow = frac * args.learning_rate
-        #     optimizer.param_groups[0]["lr"] = lrnow
+        if args.anneal_lr:
+            frac = 1.0 - (update - 1.0) / num_updates
+            lrnow = frac * args.learning_rate
+            optimizer.param_groups[0]["lr"] = lrnow
 
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
@@ -294,7 +268,7 @@ if __name__ == "__main__":
                     continue
                 print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                # writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+                writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -312,12 +286,6 @@ if __name__ == "__main__":
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-        update_ppo(args, obs, logprobs, actions, advantages, returns, values)
-
-        if update % 1 == 0:
-            current_time = time.time()-start_time
-            print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
-            eval_module.evaluate(global_step)
-
+        update_ppo()
     envs.close()
     writer.close()
