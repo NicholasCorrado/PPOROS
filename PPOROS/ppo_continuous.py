@@ -12,7 +12,6 @@ import torch.nn as nn
 import torch.optim as optim
 from gymnasium.wrappers.normalize import RunningMeanStd
 from torch.distributions.normal import Normal
-from torch.utils.tensorboard import SummaryWriter
 
 from PPOROS.evaluate import Evaluate
 from PPOROS.utils import get_latest_run_id, NormalizeReward, NormalizeObservation
@@ -230,11 +229,7 @@ if __name__ == "__main__":
             # monitor_gym=True, no longer works for gymnasium
             save_code=True,
         )
-    writer = SummaryWriter(f"runs/{run_name}")
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
+    writer = None
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
