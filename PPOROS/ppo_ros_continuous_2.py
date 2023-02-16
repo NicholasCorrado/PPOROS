@@ -13,16 +13,17 @@ import torch.nn as nn
 import torch.optim as optim
 from gymnasium.wrappers.normalize import RunningMeanStd
 from torch.distributions.normal import Normal
-from torch.utils.tensorboard import SummaryWriter
 
-from PPOROS.ppo_ros_discrete import update_ros
+from PPOROS.evaluate import Evaluate
+from PPOROS.utils import NormalizeObservation, NormalizeReward, get_latest_run_id
 
 
 def parse_args():
     # fmt: off
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"), help="the name of this experiment")
-    parser.add_argument("--seed", type=int, default=1, help="seed of the experiment")
+    parser.add_argument("--seed", type=int, default=0, help="seed of the experiment")
+    parser.add_argument("--run-id", type=int, default=None)
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, cuda will be enabled by default")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="if toggled, this experiment will be tracked with Weights and Biases")
@@ -31,27 +32,48 @@ def parse_args():
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="whether to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="InvertedPendulum-v4", help="the id of the environment")
+    parser.add_argument("--env-id", type=str, default="Hopper-v4", help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="total timesteps of the experiments")
-    parser.add_argument("--learning-rate", type=float, default=3e-4, help="the learning rate of the optimizer")
+    parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
+    parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--buffer-history", "-b", type=int, default=4, help="Number of prior collect phases to store in buffer")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
-    parser.add_argument("--num-minibatches", type=int, default=32, help="the number of mini-batches")
-    parser.add_argument("--update-epochs", type=int, default=10, help="the K epochs to update the policy")
+    parser.add_argument("--num-minibatches", type=int, default=4, help="the number of mini-batches")
+    parser.add_argument("--update-epochs", type=int, default=4, help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
-    parser.add_argument("--ent-coef", type=float, default=0.0, help="coefficient of the entropy")
+    parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
+    parser.add_argument("--ent-coef-ros", type=float, default=0.01, help="coefficient of the entropy in ros update")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
+    parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
+
+    parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
+    parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
+    parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
+    parser.add_argument("--results-subdir", "-s", type=str, default="", help="results will be saved to <results_dir>/<env_id>/<subdir>/")
+
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     # fmt: on
+
+    if args.seed is None:
+        args.seed = np.random.randint(2 ** 32 - 1)
+
+    save_dir = f"{args.results_dir}/{args.env_id}/{args.results_subdir}/ppo_ros"
+    if args.run_id:
+        save_dir += f"/run_{args.run_id}"
+    else:
+        run_id = get_latest_run_id(save_dir=save_dir) + 1
+        save_dir += f"/run_{run_id}"
+    args.save_dir = save_dir
     return args
 
 
@@ -67,10 +89,10 @@ def make_env(env_id, idx, capture_video, run_name, gamma):
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         env = gym.wrappers.ClipAction(env)
-        # env = gym.wrappers.NormalizeObservation(env)
-        # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        # env = gym.wrappers.NormalizeReward(env, gamma=gamma)
-        # env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+        env = NormalizeObservation(env)
+        env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
+        env = NormalizeReward(env, gamma=gamma)
+        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         return env
 
     return thunk
@@ -113,6 +135,9 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
 
+    def get_action(self, x):
+        action_mean = self.actor_mean(x)
+        return action_mean
 
 def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
 
@@ -240,6 +265,12 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
             if approx_kl > args.target_kl:
                 break
 
+def normalize_obs(obs_rms, obs):
+    """Normalises the observation using the running mean and variance of the observations."""
+    print(obs_rms.mean)
+    return torch.Tensor((obs.detach().numpy() - obs_rms.mean) / np.sqrt(obs_rms.var + 1e-8))
+
+
 def main():
     args = parse_args()
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -255,12 +286,8 @@ def main():
             # monitor_gym=True, no longer works for gymnasium
             save_code=True,
         )
-    writer = SummaryWriter(f"runs/{run_name}")
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
 
+    writer = None
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -281,10 +308,13 @@ def main():
 
     # ROS behavior agent
     agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
-    optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.learning_rate/10, eps=1e-5)
+    optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.learning_rate, eps=1e-5)
+
+    # Evaluation modules
+    eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device)
 
 
-    history_k = 4
+    history_k = args.history_k
     buffer_size = history_k * args.num_steps
     buffer_pos = 0
     # ALGO Logic: Storage setup
@@ -306,6 +336,10 @@ def main():
     obs_dim = envs.single_observation_space.shape[0]
     action_dim = envs.single_action_space.shape[0]
 
+
+    obs_rms = RunningMeanStd(shape=envs.single_observation_space.shape)
+    return_rms = RunningMeanStd(shape=())
+
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
         # if args.anneal_lr:
@@ -315,16 +349,18 @@ def main():
 
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
+            # obs_rms.update(next_obs.detach().numpy()) # update normalization statistics
             obs_buffer[buffer_pos] = next_obs
             dones_buffer[buffer_pos] = next_done
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, _, _, _ = agent_ros.get_action_and_value(next_obs)
-                # if args.ros:
-                #     action, _, _, _ = agent_ros.get_action_and_value(next_obs)
-                # else:
-                #     action, _, _, _ = agent.get_action_and_value(next_obs)
+                # action, _, _, _ = agent.get_action_and_value(next_obs)
+                # action, _, _, _ = agent.get_action_and_value(normalize_obs(obs_rms, next_obs))
+                if args.ros:
+                    action, _, _, _ = agent_ros.get_action_and_value(next_obs)
+                else:
+                    action, _, _, _ = agent.get_action_and_value(next_obs)
                 actions_buffer[buffer_pos] = action
 
             # TRY NOT TO MODIFY: execute the game and log data.
@@ -340,19 +376,12 @@ def main():
             if "final_info" not in infos:
                 continue
 
-            for info in infos["final_info"]:
-                # Skip the envs that are not done
-                if info is None:
-                    continue
-                print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
-
         if global_step < buffer_size:
             indices = np.arange(buffer_pos)
         else:
             indices = (np.arange(buffer_size) + buffer_pos) % buffer_size
 
+        # obs = normalize_obs(obs_rms, obs_buffer.clone()[indices])
         obs = obs_buffer.clone()[indices]
         actions = actions_buffer.clone()[indices]
         rewards = rewards_buffer.clone()[indices]
@@ -366,6 +395,7 @@ def main():
         # bootstrap value if not done
         # Compute returns and advantages -- bootstrap value if not done
         with torch.no_grad():
+            # next_value = agent.get_value(normalize_obs(obs_rms, next_obs)).reshape(1, -1)
             next_value = agent.get_value(next_obs).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
@@ -382,18 +412,24 @@ def main():
             returns = advantages + values
 
         update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
-        # if args.ros:
-        # Set ROS policy equal to current target policy
-        for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
-            source_param.data.copy_(dump_param.data)
+        if args.ros:
+            # Set ROS policy equal to current target policy
+            for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
+                source_param.data.copy_(dump_param.data)
 
-        # ROS behavior update
-        update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size, writer)
+            # ROS behavior update
+            update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size, writer)
 
         # if update % 2 == 0:
         #     update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+        if update % args.eval_freq == 0:
+            current_time = time.time() - start_time
+            print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
+            eval_module.evaluate(global_step, train_env=envs)
+            # eval_module_ros.evaluate(global_step)
+
+
     envs.close()
-    writer.close()
 
 if __name__ == "__main__":
     main()

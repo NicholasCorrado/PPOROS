@@ -1,3 +1,4 @@
+import copy
 import os
 
 import numpy as np
@@ -71,9 +72,13 @@ class Evaluate:
         # For computing success rate
         self._is_success_buffer = []
 
-    def evaluate(self, t):
+    def evaluate(self, t, train_env):
         # if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
+
+        self.eval_env = copy.deepcopy(train_env)
+        self.eval_env.envs[0].set_update(False)
         returns, successes = self._evaluate()
+        self.eval_env.envs[0].set_update(True)
 
         if self.log_path is not None:
             self.evaluations_timesteps.append(t)
