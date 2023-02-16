@@ -314,7 +314,7 @@ def main():
     eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device)
 
 
-    history_k = args.history_k
+    history_k = args.buffer_history
     buffer_size = history_k * args.num_steps
     buffer_pos = 0
     # ALGO Logic: Storage setup
