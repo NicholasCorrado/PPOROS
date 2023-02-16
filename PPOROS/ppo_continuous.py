@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import yaml
 from gymnasium.wrappers.normalize import RunningMeanStd
 from torch.distributions.normal import Normal
 
@@ -36,13 +37,13 @@ def parse_args():
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
     parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--num-steps", type=int, default=2048, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--buffer-history", "-b", type=int, default=4, help="Number of prior collect phases to store in buffer")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
-    parser.add_argument("--num-minibatches", type=int, default=4, help="the number of mini-batches")
-    parser.add_argument("--update-epochs", type=int, default=4, help="the K epochs to update the policy")
+    parser.add_argument("--num-minibatches", type=int, default=32, help="the number of mini-batches")
+    parser.add_argument("--update-epochs", type=int, default=10, help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
@@ -66,13 +67,18 @@ def parse_args():
     if args.seed is None:
         args.seed = np.random.randint(2 ** 32 - 1)
 
-    save_dir = f"{args.results_dir}/{args.env_id}/{args.results_subdir}/ppo_ros"
+    save_dir = f"{args.results_dir}/{args.env_id}/{args.results_subdir}/ppo"
     if args.run_id:
         save_dir += f"/run_{args.run_id}"
     else:
         run_id = get_latest_run_id(save_dir=save_dir) + 1
         save_dir += f"/run_{run_id}"
     args.save_dir = save_dir
+
+    os.makedirs(args.save_dir, exist_ok=True)
+    with open(os.path.join(args.save_dir, "config.yml"), "w") as f:
+        yaml.dump(args, f, sort_keys=True)
+
     return args
 
 
@@ -150,12 +156,15 @@ def update_ppo():
     b_values = values.reshape(-1)
 
     # Optimizing the policy and value network
-    b_inds = np.arange(args.batch_size)
+    batch_size = b_obs.shape[0]
+    minibatch_size = int(batch_size // args.num_minibatches)
+    b_inds = np.arange(batch_size)
+
     clipfracs = []
     for epoch in range(args.update_epochs):
         np.random.shuffle(b_inds)
-        for start in range(0, args.batch_size, args.minibatch_size):
-            end = start + args.minibatch_size
+        for start in range(0, batch_size, minibatch_size):
+            end = start + minibatch_size
             mb_inds = b_inds[start:end]
 
             _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])

@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import yaml
 from gymnasium.wrappers.normalize import RunningMeanStd
 from torch.distributions.normal import Normal
 
@@ -37,13 +38,13 @@ def parse_args():
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
     parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--num-steps", type=int, default=2048, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--buffer-history", "-b", type=int, default=4, help="Number of prior collect phases to store in buffer")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
-    parser.add_argument("--num-minibatches", type=int, default=4, help="the number of mini-batches")
-    parser.add_argument("--update-epochs", type=int, default=4, help="the K epochs to update the policy")
+    parser.add_argument("--num-minibatches", type=int, default=32, help="the number of mini-batches")
+    parser.add_argument("--update-epochs", type=int, default=10, help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
@@ -74,6 +75,11 @@ def parse_args():
         run_id = get_latest_run_id(save_dir=save_dir) + 1
         save_dir += f"/run_{run_id}"
     args.save_dir = save_dir
+
+    os.makedirs(args.save_dir, exist_ok=True)
+    with open(os.path.join(args.save_dir, "config.yml"), "w") as f:
+        yaml.dump(args, f, sort_keys=True)
+
     return args
 
 
@@ -339,6 +345,8 @@ def main():
 
     obs_rms = RunningMeanStd(shape=envs.single_observation_space.shape)
     return_rms = RunningMeanStd(shape=())
+
+
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
