@@ -53,6 +53,7 @@ def parse_args():
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
+    parser.add_argument("--target-kl-ros", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
@@ -250,7 +251,7 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
 
             with torch.no_grad():
                 # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-logratio).mean()
+                # old_approx_kl = (-logratio).mean()
                 approx_kl = ((ratio - 1) - logratio).mean()
                 clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
@@ -267,8 +268,8 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
             nn.utils.clip_grad_norm_(agent_ros.parameters(), args.max_grad_norm)
             optimizer_ros.step()
 
-        if args.target_kl is not None:
-            if approx_kl > args.target_kl:
+        if args.target_kl_ros is not None:
+            if approx_kl > args.target_kl_ros:
                 break
 
 def normalize_obs(obs_rms, obs):
