@@ -49,7 +49,7 @@ def parse_args():
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
     parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
-    parser.add_argument("--ent-coef-ros", type=float, default=0.01, help="coefficient of the entropy in ros update")
+    parser.add_argument("--ent-coef-ros", type=float, default=0.0, help="coefficient of the entropy in ros update")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
@@ -260,7 +260,7 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             entropy_loss = entropy.mean()
-            loss = pg_loss - args.ent_coef * entropy_loss
+            loss = pg_loss - args.ent_coef_ros * entropy_loss
 
             optimizer_ros.zero_grad()
             loss.backward()
