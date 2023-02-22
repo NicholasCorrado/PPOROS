@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from gymnasium.wrappers.normalize import RunningMeanStd
+from torch import optim
 from torch.distributions.categorical import Categorical
 
 def get_latest_run_id(save_dir: str) -> int:
@@ -126,3 +127,10 @@ class NormalizeReward(gym.core.Wrapper):
         if self.do_update:
             self.return_rms.update(self.returns)
         return rews / np.sqrt(self.return_rms.var + self.epsilon)
+
+# def _find_mle_policy(agent, args, obs, actions):
+#     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+#     _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+
+
+

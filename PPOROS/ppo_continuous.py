@@ -280,6 +280,13 @@ if __name__ == "__main__":
     num_updates = args.total_timesteps // args.batch_size
     video_filenames = set()
 
+    sampling_error = []
+    entropy_target = []
+    entropy_ros = []
+
+    obs_dim = envs.single_observation_space.shape[0]
+    action_dim = envs.single_action_space.shape[0]
+
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
         # if args.anneal_lr:
@@ -334,6 +341,32 @@ if __name__ == "__main__":
             # eval_module_ros.evaluate(global_step)
 
 
+        if update % 2*args.eval_freq:
+            # agent_mle = copy.deepcopy(agent)
+            agent_mle = Agent(envs).to(device)
+
+            optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
+
+            for i in range(1000):
+                _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+                loss = -torch.mean(logprobs_mle)
+
+                optimizer_mle.zero_grad()
+                loss.backward()
+                optimizer_mle.step()
+
+            _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+            logratio = logprobs_mle - logprobs
+            ratio = logratio.exp()
+            approx_kl = ((ratio - 1) - logratio).mean()
+            print(loss, approx_kl)
+
+            sampling_error.append(approx_kl.item())
+            entropy_target.append(ent_target.mean().item())
+
+            np.savez(f'{args.save_dir}/stats.npz',
+                     sampling_error=np.array(sampling_error),
+                     entropy_target=np.array(entropy_target))
 
     envs.close()
     # writer.close()
