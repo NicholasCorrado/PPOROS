@@ -341,7 +341,7 @@ if __name__ == "__main__":
             # eval_module_ros.evaluate(global_step)
 
 
-        if update % 2*args.eval_freq == 0:
+        if update % (2*args.eval_freq) == 0:
             # agent_mle = copy.deepcopy(agent)
             agent_mle = Agent(envs).to(device)
 
