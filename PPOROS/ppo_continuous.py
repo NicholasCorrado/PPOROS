@@ -355,18 +355,20 @@ if __name__ == "__main__":
                 loss.backward()
                 optimizer_mle.step()
 
-            _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
-            logratio = logprobs_mle - logprobs
-            ratio = logratio.exp()
-            approx_kl = ((ratio - 1) - logratio).mean()
-            print(loss, approx_kl)
+            with torch.no_grad():
 
-            sampling_error.append(approx_kl.item())
-            entropy_target.append(ent_target.mean().item())
+                _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+                logratio = logprobs_mle - logprobs
+                ratio = logratio.exp()
+                approx_kl = ((ratio - 1) - logratio).mean()
+                print(loss, approx_kl)
 
-            np.savez(f'{args.save_dir}/stats.npz',
-                     sampling_error=np.array(sampling_error),
-                     entropy_target=np.array(entropy_target))
+                sampling_error.append(approx_kl.item())
+                entropy_target.append(ent_target.mean().item())
+
+                np.savez(f'{args.save_dir}/stats.npz',
+                         sampling_error=np.array(sampling_error),
+                         entropy_target=np.array(entropy_target))
 
     envs.close()
     # writer.close()

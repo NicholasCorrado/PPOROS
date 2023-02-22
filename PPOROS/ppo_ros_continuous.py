@@ -449,22 +449,23 @@ def main():
                 loss.backward()
                 optimizer_mle.step()
 
-            _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
-            logratio = logprobs_mle - logprobs
-            ratio = logratio.exp()
-            approx_kl = ((ratio - 1) - logratio).mean()
-            print(loss, approx_kl)
+            with torch.no_grad():
+                _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+                logratio = logprobs_mle - logprobs
+                ratio = logratio.exp()
+                approx_kl = ((ratio - 1) - logratio).mean()
+                print(loss, approx_kl)
 
-            _, logprobs_ros, ent_ros, _ = agent_ros.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+                _, logprobs_ros, ent_ros, _ = agent_ros.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
 
-            sampling_error.append(approx_kl.item())
-            entropy_target.append(ent_target.mean().item())
-            entropy_ros.append(ent_ros.mean().item())
+                sampling_error.append(approx_kl.item())
+                entropy_target.append(ent_target.mean().item())
+                entropy_ros.append(ent_ros.mean().item())
 
-            np.savez(f'{args.save_dir}/stats.npz',
-                     sampling_error=np.array(sampling_error),
-                     entropy_target=np.array(entropy_target),
-                     entropy_ros=np.array(entropy_ros))
+                np.savez(f'{args.save_dir}/stats.npz',
+                         sampling_error=np.array(sampling_error),
+                         entropy_target=np.array(entropy_target),
+                         entropy_ros=np.array(entropy_ros))
 
 
 
