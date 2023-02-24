@@ -67,7 +67,7 @@ def parse_args():
     if args.seed is None:
         args.seed = np.random.randint(2 ** 32 - 1)
 
-    save_dir = f"{args.results_dir}/{args.env_id}/{args.results_subdir}/ppo"
+    save_dir = f"{args.results_dir}/{args.env_id}/ppo/{args.results_subdir}"
     if args.run_id:
         save_dir += f"/run_{args.run_id}"
     else:
