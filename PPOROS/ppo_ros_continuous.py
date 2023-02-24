@@ -465,7 +465,7 @@ def main():
                 timesteps.append(global_step)
 
                 np.savez(f'{args.save_dir}/stats.npz',
-                         t=np.arrary(timesteps),
+                         t=np.array(timesteps),
                          sampling_error=np.array(sampling_error),
                          entropy_target=np.array(entropy_target),
                          entropy_ros=np.array(entropy_ros))
