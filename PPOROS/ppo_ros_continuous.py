@@ -349,7 +349,7 @@ def main():
     entropy_ros = []
 
     for update in range(1, num_updates + 1):
-        Annealing the rate if instructed to do so.
+        # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (update - 1.0) / num_updates
             lrnow = frac * args.learning_rate
