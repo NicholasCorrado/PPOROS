@@ -343,27 +343,27 @@ if __name__ == "__main__":
 
         if update % (2*args.eval_freq) == 0:
             # agent_mle = copy.deepcopy(agent)
-            agent_mle = Agent(envs).to(device)
-
-            optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
-
-            for i in range(1000):
-                _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
-                loss = -torch.mean(logprobs_mle)
-
-                optimizer_mle.zero_grad()
-                loss.backward()
-                optimizer_mle.step()
+            # agent_mle = Agent(envs).to(device)
+            #
+            # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
+            #
+            # for i in range(1000):
+            #     _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+            #     loss = -torch.mean(logprobs_mle)
+            #
+            #     optimizer_mle.zero_grad()
+            #     loss.backward()
+            #     optimizer_mle.step()
 
             with torch.no_grad():
 
                 _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
-                logratio = logprobs_mle - logprobs
-                ratio = logratio.exp()
-                approx_kl = ((ratio - 1) - logratio).mean()
-                print(loss, approx_kl)
+                # logratio = logprobs_mle - logprobs
+                # ratio = logratio.exp()
+                # approx_kl = ((ratio - 1) - logratio).mean()
+                # print(loss, approx_kl)
 
-                sampling_error.append(approx_kl.item())
+                # sampling_error.append(approx_kl.item())
                 entropy_target.append(ent_target.mean().item())
 
                 np.savez(f'{args.save_dir}/stats.npz',

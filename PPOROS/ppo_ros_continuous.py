@@ -343,6 +343,7 @@ def main():
     obs_dim = envs.single_observation_space.shape[0]
     action_dim = envs.single_action_space.shape[0]
 
+    timesteps = []
     sampling_error = []
     entropy_target = []
     entropy_ros = []
@@ -437,41 +438,37 @@ def main():
 
         if update % (2*args.eval_freq) == 0:
             # agent_mle = copy.deepcopy(agent)
-            agent_mle = Agent(envs).to(device)
-
-            optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
-
-            for i in range(1000):
-                _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
-                loss = -torch.mean(logprobs_mle)
-
-                optimizer_mle.zero_grad()
-                loss.backward()
-                optimizer_mle.step()
+            # agent_mle = Agent(envs).to(device)
+            #
+            # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-2, eps=1e-5)
+            #
+            # for i in range(10000):
+            #     _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+            #     loss = -torch.mean(logprobs_mle)
+            #     print(loss)
+            #     optimizer_mle.zero_grad()
+            #     loss.backward()
+            #     optimizer_mle.step()
 
             with torch.no_grad():
                 _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
-                logratio = logprobs_mle - logprobs
-                ratio = logratio.exp()
-                approx_kl = ((ratio - 1) - logratio).mean()
-                print(loss, approx_kl)
+                # logratio = logprobs_mle - logprobs
+                # ratio = logratio.exp()
+                # approx_kl = ((ratio - 1) - logratio).mean()
+                # print(loss, approx_kl)
 
                 _, logprobs_ros, ent_ros, _ = agent_ros.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
 
-                sampling_error.append(approx_kl.item())
+                # sampling_error.append(approx_kl.item())
                 entropy_target.append(ent_target.mean().item())
                 entropy_ros.append(ent_ros.mean().item())
+                timesteps.append(global_step)
 
                 np.savez(f'{args.save_dir}/stats.npz',
+                         t=np.arrary(timesteps),
                          sampling_error=np.array(sampling_error),
                          entropy_target=np.array(entropy_target),
                          entropy_ros=np.array(entropy_ros))
-
-
-
-
-
-
     envs.close()
 
 if __name__ == "__main__":
