@@ -280,6 +280,7 @@ if __name__ == "__main__":
     num_updates = args.total_timesteps // args.batch_size
     video_filenames = set()
 
+    timesteps = []
     sampling_error = []
     entropy_target = []
     entropy_ros = []
@@ -365,8 +366,10 @@ if __name__ == "__main__":
 
                 # sampling_error.append(approx_kl.item())
                 entropy_target.append(ent_target.mean().item())
+                timesteps.append(global_step)
 
                 np.savez(f'{args.save_dir}/stats.npz',
+                         timesteps=np.array(timesteps),
                          sampling_error=np.array(sampling_error),
                          entropy_target=np.array(entropy_target))
 
