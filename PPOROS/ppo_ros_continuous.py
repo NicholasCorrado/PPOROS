@@ -55,6 +55,7 @@ def parse_args():
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--target-kl-ros", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
@@ -348,6 +349,9 @@ def main():
     entropy_target = []
     entropy_ros = []
 
+    # agent_mle = copy.deepcopy(agent)
+    # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
+
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
@@ -365,7 +369,7 @@ def main():
             with torch.no_grad():
                 # action, _, _, _ = agent.get_action_and_value(next_obs)
                 # action, _, _, _ = agent.get_action_and_value(normalize_obs(obs_rms, next_obs))
-                if args.ros:
+                if args.ros and np.random.random() < args.ros_mixture_prob:
                     action, _, _, _ = agent_ros.get_action_and_value(next_obs)
                 else:
                     action, _, _, _ = agent.get_action_and_value(next_obs)

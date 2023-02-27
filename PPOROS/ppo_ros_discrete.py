@@ -55,6 +55,7 @@ def parse_args():
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--target-kl-ros", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
     parser.add_argument("--compute-sampling-error", type=float, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
@@ -350,7 +351,7 @@ def main():
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                if args.ros:
+                if args.ros and np.random.random() < args.ros_mixture_prob:
                     action, _, _, _ = agent_ros.get_action_and_value(next_obs)
                 else:
                     action, _, _, _ = agent.get_action_and_value(next_obs)
