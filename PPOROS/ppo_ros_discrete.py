@@ -33,7 +33,7 @@ def parse_args():
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="whether to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="CartPole-v1", help="the id of the environment")
+    parser.add_argument("--env-id", type=str, default="LunarLander-v2", help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=500000, help="total timesteps of the experiments")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
     parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
@@ -55,6 +55,7 @@ def parse_args():
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--target-kl-ros", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--compute-sampling-error", type=float, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
@@ -429,49 +430,49 @@ def main():
             eval_module.evaluate_old_gym(global_step)
             eval_module_ros.evaluate_old_gym(global_step)
 
-        if update % (args.eval_freq) == 0:
-            # agent_mle = copy.deepcopy(agent)
-            # agent_mle = Agent(envs).to(device)
+            if args.compute_sampling_error:
+                # agent_mle = copy.deepcopy(agent)
+                # agent_mle = Agent(envs).to(device)
 
-            # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
+                # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
 
-            loss_prev = -np.inf
-            loss_diff = np.inf
+                loss_prev = -np.inf
+                loss_diff = np.inf
 
-            i = 0
-            while loss_diff > 0.0001 and i < 10000:
-                _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
-                loss = -torch.mean(logprobs_mle)
-                optimizer_mle.zero_grad()
-                loss.backward()
-                optimizer_mle.step()
+                i = 0
+                while loss_diff > 0.0001 and i < 10000:
+                    _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
+                    loss = -torch.mean(logprobs_mle)
+                    optimizer_mle.zero_grad()
+                    loss.backward()
+                    optimizer_mle.step()
 
-                if i % 100 == 0:
-                    loss_diff = torch.abs(loss - loss_prev)
-                    loss_prev = loss
-                    print(i, loss.item(), loss_diff)
-                i += 1
-
-
-            with torch.no_grad():
-                _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
-                logratio = logprobs_mle - logprobs
-                ratio = logratio.exp()
-                approx_kl = ((ratio - 1) - logratio).mean()
-                print('D_kl( mle || target ) = ', approx_kl.item())
-                _, logprobs_ros, ent_ros, _ = agent_ros.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+                    if i % 100 == 0:
+                        loss_diff = torch.abs(loss - loss_prev)
+                        loss_prev = loss
+                        # print(i, loss.item(), loss_diff)
+                    i += 1
 
 
-                sampling_error.append(approx_kl.item())
-                entropy_target.append(ent_target.mean().item())
-                entropy_ros.append(ent_ros.mean().item())
-                timesteps.append(global_step)
+                with torch.no_grad():
+                    _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
+                    logratio = logprobs_mle - logprobs
+                    ratio = logratio.exp()
+                    approx_kl = ((ratio - 1) - logratio).mean()
+                    print('D_kl( mle || target ) = ', approx_kl.item())
+                    _, logprobs_ros, ent_ros, _ = agent_ros.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
 
-                np.savez(f'{args.save_dir}/stats.npz',
-                         t=timesteps,
-                         sampling_error=sampling_error,
-                         entropy_target=entropy_target,
-                         entropy_ros=entropy_ros)
+
+                    sampling_error.append(approx_kl.item())
+                    entropy_target.append(ent_target.mean().item())
+                    entropy_ros.append(ent_ros.mean().item())
+                    timesteps.append(global_step)
+
+                    np.savez(f'{args.save_dir}/stats.npz',
+                             t=timesteps,
+                             sampling_error=sampling_error,
+                             entropy_target=entropy_target,
+                             entropy_ros=entropy_ros)
 
     envs.close()
 

@@ -50,6 +50,7 @@ def parse_args():
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
+    parser.add_argument("--compute-sampling-error", type=float, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
@@ -308,44 +309,44 @@ if __name__ == "__main__":
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
             eval_module.evaluate_old_gym(global_step)
 
-        if update % (args.eval_freq) == 0:
-            # agent_mle = copy.deepcopy(agent)
-            # agent_mle = Agent(envs).to(device)
+            if args.compute_sampling_error:
+                # agent_mle = copy.deepcopy(agent)
+                # agent_mle = Agent(envs).to(device)
 
-            # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
+                # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
 
-            loss_prev = -np.inf
-            loss_diff = np.inf
+                loss_prev = -np.inf
+                loss_diff = np.inf
 
-            i = 0
-            while loss_diff > 0.0001 and i < 10000:
-                _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
-                loss = -torch.mean(logprobs_mle)
-                optimizer_mle.zero_grad()
-                loss.backward()
-                optimizer_mle.step()
+                i = 0
+                while loss_diff > 0.0001 and i < 10000:
+                    _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
+                    loss = -torch.mean(logprobs_mle)
+                    optimizer_mle.zero_grad()
+                    loss.backward()
+                    optimizer_mle.step()
 
-                if i % 100 == 0:
-                    loss_diff = torch.abs(loss - loss_prev)
-                    loss_prev = loss
-                    print(i, loss.item(), loss_diff)
-                i += 1
+                    if i % 100 == 0:
+                        loss_diff = torch.abs(loss - loss_prev)
+                        loss_prev = loss
+                        print(i, loss.item(), loss_diff)
+                    i += 1
 
 
-            with torch.no_grad():
-                _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
-                logratio = logprobs_mle - logprobs
-                ratio = logratio.exp()
-                approx_kl = ((ratio - 1) - logratio).mean()
-                print('D_kl( mle || target ) = ', approx_kl.item())
+                with torch.no_grad():
+                    _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
+                    logratio = logprobs_mle - logprobs
+                    ratio = logratio.exp()
+                    approx_kl = ((ratio - 1) - logratio).mean()
+                    print('D_kl( mle || target ) = ', approx_kl.item())
 
-                sampling_error.append(approx_kl.item())
-                entropy_target.append(ent_target.mean().item())
-                timesteps.append(global_step)
+                    sampling_error.append(approx_kl.item())
+                    entropy_target.append(ent_target.mean().item())
+                    timesteps.append(global_step)
 
-                np.savez(f'{args.save_dir}/stats.npz',
-                         t=timesteps,
-                         sampling_error=sampling_error,
-                         entropy_target=entropy_target)
+                    np.savez(f'{args.save_dir}/stats.npz',
+                             t=timesteps,
+                             sampling_error=sampling_error,
+                             entropy_target=entropy_target)
 
     envs.close()
