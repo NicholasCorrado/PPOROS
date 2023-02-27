@@ -1,6 +1,7 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
 
 import argparse
+import copy
 import os
 import random
 import time
@@ -59,6 +60,23 @@ def parse_args():
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     # fmt: on
+
+    if args.seed is None:
+        args.seed = np.random.randint(2 ** 32 - 1)
+
+    save_dir = f"{args.results_dir}/{args.env_id}/ppo/{args.results_subdir}/"
+    if args.run_id:
+        save_dir += f"/run_{args.run_id}"
+    else:
+        run_id = get_latest_run_id(save_dir=save_dir) + 1
+        save_dir += f"/run_{run_id}"
+    args.save_dir = save_dir
+
+    os.makedirs(args.save_dir, exist_ok=True)
+    with open(os.path.join(args.save_dir, "config.yml"), "w") as f:
+        yaml.dump(args, f, sort_keys=True)
+
+
     return args
 
 
@@ -125,17 +143,6 @@ if __name__ == "__main__":
 
     writer = None
 
-    save_dir = f"{args.results_dir}/{args.env_id}/{args.results_subdir}/ppo"
-    if args.run_id:
-        save_dir += f"/run_{args.run_id}"
-    else:
-        run_id = get_latest_run_id(save_dir=save_dir) + 1
-        save_dir += f"/run_{run_id}"
-    print(f'Results will be saved to {save_dir}')
-    # Save config
-    with open(os.path.join(save_dir, "config.yml"), "w") as f:
-        yaml.dump(args, f, sort_keys=True)
-
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -156,10 +163,10 @@ if __name__ == "__main__":
     eval_envs = gym.vector.SyncVectorEnv(
         [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name) for i in range(1)]
     )
-    eval_module = Evaluate(model=agent, eval_env=eval_envs, n_eval_episodes=args.eval_episodes, log_path=save_dir, device=device)
+    eval_module = Evaluate(model=agent, eval_env=eval_envs, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device)
 
     # Save config
-    with open(os.path.join(save_dir, "config.yml"), "w") as f:
+    with open(os.path.join(args.save_dir, "config.yml"), "w") as f:
         yaml.dump(args, f, sort_keys=True)
 
     # ALGO Logic: Storage setup
@@ -176,6 +183,18 @@ if __name__ == "__main__":
     next_obs = torch.Tensor(envs.reset()).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
+
+    obs_dim = envs.single_observation_space.shape[0]
+    action_dim = 1
+
+    timesteps = []
+    sampling_error = []
+    entropy_target = []
+    entropy_ros = []
+
+    agent_mle = copy.deepcopy(agent)
+    optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
+
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
@@ -288,5 +307,45 @@ if __name__ == "__main__":
             current_time = time.time()-start_time
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
             eval_module.evaluate_old_gym(global_step)
+
+        if update % (args.eval_freq) == 0:
+            # agent_mle = copy.deepcopy(agent)
+            # agent_mle = Agent(envs).to(device)
+
+            # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
+
+            loss_prev = -np.inf
+            loss_diff = np.inf
+
+            i = 0
+            while loss_diff > 0.0001 and i < 10000:
+                _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
+                loss = -torch.mean(logprobs_mle)
+                optimizer_mle.zero_grad()
+                loss.backward()
+                optimizer_mle.step()
+
+                if i % 100 == 0:
+                    loss_diff = torch.abs(loss - loss_prev)
+                    loss_prev = loss
+                    print(i, loss.item(), loss_diff)
+                i += 1
+
+
+            with torch.no_grad():
+                _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
+                logratio = logprobs_mle - logprobs
+                ratio = logratio.exp()
+                approx_kl = ((ratio - 1) - logratio).mean()
+                print('D_kl( mle || target ) = ', approx_kl.item())
+
+                sampling_error.append(approx_kl.item())
+                entropy_target.append(ent_target.mean().item())
+                timesteps.append(global_step)
+
+                np.savez(f'{args.save_dir}/stats.npz',
+                         t=timesteps,
+                         sampling_error=sampling_error,
+                         entropy_target=entropy_target)
 
     envs.close()

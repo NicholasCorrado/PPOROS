@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--buffer-history", "-b", type=int, default=100, help="Number of prior collect phases to store in buffer")
+    parser.add_argument("--buffer-history", "-b", type=int, default=2, help="Number of prior collect phases to store in buffer")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -53,6 +53,7 @@ def parse_args():
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
+    parser.add_argument("--target-kl-ros", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
@@ -68,13 +69,18 @@ def parse_args():
     if args.seed is None:
         args.seed = np.random.randint(2 ** 32 - 1)
 
-    save_dir = f"{args.results_dir}/{args.env_id}/{args.results_subdir}/ppo_ros"
+    save_dir = f"{args.results_dir}/{args.env_id}/ppo_ros/{args.results_subdir}"
     if args.run_id:
         save_dir += f"/run_{args.run_id}"
     else:
         run_id = get_latest_run_id(save_dir=save_dir) + 1
         save_dir += f"/run_{run_id}"
     args.save_dir = save_dir
+
+    os.makedirs(args.save_dir, exist_ok=True)
+    with open(os.path.join(args.save_dir, "config.yml"), "w") as f:
+        yaml.dump(args, f, sort_keys=True)
+
     return args
 
 def make_env(env_id, seed, idx, capture_video, run_name):
@@ -255,15 +261,12 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
             nn.utils.clip_grad_norm_(agent_ros.parameters(), args.max_grad_norm)
             optimizer_ros.step()
 
-        if args.target_kl is not None:
-            if approx_kl > args.target_kl:
+        if args.target_kl_ros is not None:
+            if approx_kl > args.target_kl_ros:
                 break
 
 def main():
     args = parse_args()
-    # Save config
-    with open(os.path.join(args.save_dir, "config.yml"), "w") as f:
-        yaml.dump(args, f, sort_keys=True)
 
     writer = None
 
@@ -322,6 +325,15 @@ def main():
 
     obs_dim = envs.single_observation_space.shape[0]
     action_dim = 1
+
+    timesteps = []
+    sampling_error = []
+    entropy_target = []
+    entropy_ros = []
+
+    agent_mle = copy.deepcopy(agent)
+    optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
+
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
@@ -417,6 +429,49 @@ def main():
             eval_module.evaluate_old_gym(global_step)
             eval_module_ros.evaluate_old_gym(global_step)
 
+        if update % (args.eval_freq) == 0:
+            # agent_mle = copy.deepcopy(agent)
+            # agent_mle = Agent(envs).to(device)
+
+            # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
+
+            loss_prev = -np.inf
+            loss_diff = np.inf
+
+            i = 0
+            while loss_diff > 0.0001 and i < 10000:
+                _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
+                loss = -torch.mean(logprobs_mle)
+                optimizer_mle.zero_grad()
+                loss.backward()
+                optimizer_mle.step()
+
+                if i % 100 == 0:
+                    loss_diff = torch.abs(loss - loss_prev)
+                    loss_prev = loss
+                    print(i, loss.item(), loss_diff)
+                i += 1
+
+
+            with torch.no_grad():
+                _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
+                logratio = logprobs_mle - logprobs
+                ratio = logratio.exp()
+                approx_kl = ((ratio - 1) - logratio).mean()
+                print('D_kl( mle || target ) = ', approx_kl.item())
+                _, logprobs_ros, ent_ros, _ = agent_ros.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+
+
+                sampling_error.append(approx_kl.item())
+                entropy_target.append(ent_target.mean().item())
+                entropy_ros.append(ent_ros.mean().item())
+                timesteps.append(global_step)
+
+                np.savez(f'{args.save_dir}/stats.npz',
+                         t=timesteps,
+                         sampling_error=sampling_error,
+                         entropy_target=entropy_target,
+                         entropy_ros=entropy_ros)
 
     envs.close()
 
