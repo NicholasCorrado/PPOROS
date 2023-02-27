@@ -329,7 +329,7 @@ if __name__ == "__main__":
                     if i % 100 == 0:
                         loss_diff = torch.abs(loss - loss_prev)
                         loss_prev = loss
-                        print(i, loss.item(), loss_diff)
+                        # print(i, loss.item(), loss_diff)
                     i += 1
 
 
