@@ -33,13 +33,13 @@ def parse_args():
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="whether to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="LunarLander-v2", help="the id of the environment")
+    parser.add_argument("--env-id", type=str, default="CartPole-v1", help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=500000, help="total timesteps of the experiments")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
     parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--buffer-history", "-b", type=int, default=2, help="Number of prior collect phases to store in buffer")
+    parser.add_argument("--buffer-history", "-b", type=int, default=4, help="Number of prior collect phases to store in buffer")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -55,6 +55,8 @@ def parse_args():
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--target-kl-ros", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--ros-update-freq", type=int, default=16, help="Number of timesteps between ROS updates")
+    parser.add_argument("--ros-update-epochs", type=int, default=16, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
     parser.add_argument("--compute-sampling-error", type=float, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
@@ -173,7 +175,6 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
             with torch.no_grad():
                 # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-logratio).mean()
                 approx_kl = ((ratio - 1) - logratio).mean()
                 clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
@@ -213,10 +214,6 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             if approx_kl > args.target_kl:
                 break
 
-    y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-    var_y = np.var(y_true)
-    explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-
 def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size, writer):
 
     # flatten the batch
@@ -238,7 +235,7 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
     b_inds = np.arange(batch_size)
     clipfracs = []
 
-    for epoch in range(args.update_epochs):
+    for epoch in range(args.ros_update_epochs):
         np.random.shuffle(b_inds)
         for start in range(0, batch_size, minibatch_size):
             end = start + minibatch_size
@@ -250,7 +247,6 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
 
             with torch.no_grad():
                 # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-logratio).mean()
                 approx_kl = ((ratio - 1) - logratio).mean()
                 clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
@@ -259,8 +255,7 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
             pg_loss2 = -torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-            entropy_loss = entropy.mean()
-            loss = pg_loss - args.ent_coef_ros * entropy_loss
+            loss = pg_loss
 
             optimizer_ros.zero_grad()
             loss.backward()
@@ -378,15 +373,10 @@ def main():
         else:
             indices = (np.arange(buffer_size) + buffer_pos) % buffer_size
 
-        obs = obs_buffer.clone()[indices]
-        actions = actions_buffer.clone()[indices]
-        rewards = rewards_buffer.clone()[indices]
-        dones = dones_buffer.clone()[indices]
-
-        # obs_buffer = obs_buffer[indices]
-        # actions_buffer = actions_buffer[indices]
-        # rewards_buffer = rewards_buffer[indices]
-        # dones_buffer = dones_buffer[indices]
+        obs = obs_buffer[indices]
+        actions = actions_buffer[indices]
+        rewards = rewards_buffer[indices]
+        dones = dones_buffer[indices]
 
         # Compute value estimates and logprobs
         with torch.no_grad():
