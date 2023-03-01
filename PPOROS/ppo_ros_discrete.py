@@ -334,6 +334,7 @@ def main():
 
     timesteps = []
     sampling_error = []
+    kl_ros_target = []
     entropy_target = []
     entropy_ros = []
 
@@ -441,12 +442,15 @@ def main():
 
                 # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
 
+                b_obs = obs[:global_step].reshape(-1, obs_dim)
+                b_actions = actions[:global_step].reshape(-1)
+
                 loss_prev = -np.inf
                 loss_diff = np.inf
 
                 i = 0
                 while loss_diff > 0.0001 and i < 10000:
-                    _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
+                    _, logprobs_mle, _, _ = agent_mle.get_action_and_value(b_obs, b_actions)
                     loss = -torch.mean(logprobs_mle)
                     optimizer_mle.zero_grad()
                     loss.backward()
@@ -455,20 +459,26 @@ def main():
                     if i % 100 == 0:
                         loss_diff = torch.abs(loss - loss_prev)
                         loss_prev = loss
-                        # print(i, loss.item(), loss_diff)
+                        print(i, loss.item(), loss_diff)
                     i += 1
 
 
                 with torch.no_grad():
-                    _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
-                    logratio = logprobs_mle - logprobs
+                    _, logprobs_target, ent_target, _ = agent.get_action_and_value(b_obs, b_actions)
+                    logratio = logprobs_mle - logprobs_target
                     ratio = logratio.exp()
-                    approx_kl = ((ratio - 1) - logratio).mean()
-                    print('D_kl( mle || target ) = ', approx_kl.item())
-                    _, logprobs_ros, ent_ros, _ = agent_ros.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+                    approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+                    print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
+                    _, logprobs_ros, ent_ros, _ = agent_ros.get_action_and_value(b_obs, b_actions)
+
+                    logratio = logprobs_ros - logprobs_target
+                    ratio = logratio.exp()
+                    approx_kl_ros_target = ((ratio - 1) - logratio).mean()
+                    print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
 
 
-                    sampling_error.append(approx_kl.item())
+                    sampling_error.append(approx_kl_mle_target.item())
+                    kl_ros_target.append(approx_kl_ros_target.item())
                     entropy_target.append(ent_target.mean().item())
                     entropy_ros.append(ent_ros.mean().item())
                     timesteps.append(global_step)
@@ -476,6 +486,7 @@ def main():
                     np.savez(f'{args.save_dir}/stats.npz',
                              t=timesteps,
                              sampling_error=sampling_error,
+                             kl_ros_target=kl_ros_target,
                              entropy_target=entropy_target,
                              entropy_ros=entropy_ros)
 
