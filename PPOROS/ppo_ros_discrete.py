@@ -56,6 +56,7 @@ def parse_args():
     parser.add_argument("--target-kl-ros", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-update-freq", type=int, default=16, help="Number of timesteps between ROS updates")
+    parser.add_argument("--ros-reset-freq", type=int, default=1, help="Reset ROS policy to target policy every ros_reset_freq updates")
     parser.add_argument("--ros-update-epochs", type=int, default=256, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
     parser.add_argument("--compute-sampling-error", type=float, default=False, help="True = use ROS policy to collect data, False = use target policy")
@@ -406,8 +407,9 @@ def main():
 
         if args.ros:
             # Set ROS policy equal to current target policy
-            for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
-                source_param.data.copy_(dump_param.data)
+            if update % args.ros_reset_freq:
+                for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
+                    source_param.data.copy_(dump_param.data)
 
             # ROS behavior update
             update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size, writer)
@@ -472,7 +474,7 @@ def main():
                     timesteps.append(global_step)
 
                     np.savez(f'{args.save_dir}/stats.npz',
-                             t=timesteps,
+                             timesteps=timesteps,
                              sampling_error=sampling_error,
                              kl_ros_target=kl_ros_target,
                              entropy_target=entropy_target,
