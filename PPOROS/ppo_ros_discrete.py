@@ -253,8 +253,8 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
                 clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
             # Policy loss
-            pg_loss1 = -ratio
-            pg_loss2 = -torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+            pg_loss1 = ratio
+            pg_loss2 = torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             loss = pg_loss
