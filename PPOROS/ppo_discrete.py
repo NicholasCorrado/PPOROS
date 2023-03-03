@@ -310,10 +310,10 @@ if __name__ == "__main__":
             eval_module.evaluate_old_gym(global_step)
 
             if args.compute_sampling_error:
-                # agent_mle = copy.deepcopy(agent)
+                agent_mle = copy.deepcopy(agent)
                 # agent_mle = Agent(envs).to(device)
 
-                # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
+                optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
 
                 loss_prev = -np.inf
                 loss_diff = np.inf
@@ -345,7 +345,7 @@ if __name__ == "__main__":
                     timesteps.append(global_step)
 
                     np.savez(f'{args.save_dir}/stats.npz',
-                             t=timesteps,
+                             timesteps=timesteps,
                              sampling_error=sampling_error,
                              entropy_target=entropy_target)
 
