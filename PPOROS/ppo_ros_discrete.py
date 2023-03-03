@@ -443,17 +443,17 @@ def main():
                 loss_diff = np.inf
 
                 i = 0
-                while loss_diff > 0.0001 and i < 10000:
+                while i < 10000:
                     _, logprobs_mle, _, _ = agent_mle.get_action_and_value(b_obs, b_actions)
                     loss = -torch.mean(logprobs_mle)
                     optimizer_mle.zero_grad()
                     loss.backward()
                     optimizer_mle.step()
 
-                    if i % 100 == 0:
-                        loss_diff = torch.abs(loss - loss_prev)
-                        loss_prev = loss
-                        print(i, loss.item(), loss_diff)
+                    # if i % 100 == 0:
+                    #     loss_diff = torch.abs(loss - loss_prev)
+                    #     loss_prev = loss
+                    #     print(i, loss.item(), loss_diff)
                     i += 1
 
 
