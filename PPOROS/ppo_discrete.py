@@ -313,13 +313,13 @@ if __name__ == "__main__":
                 agent_mle = copy.deepcopy(agent)
                 # agent_mle = Agent(envs).to(device)
 
-                optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
+                optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
 
                 loss_prev = -np.inf
                 loss_diff = np.inf
 
                 i = 0
-                while loss_diff > 0.0001 and i < 10000:
+                while i < 10000:
                     _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1))
                     loss = -torch.mean(logprobs_mle)
                     optimizer_mle.zero_grad()
