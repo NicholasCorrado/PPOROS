@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=2048, help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--buffer-history", "-b", type=int, default=4, help="Number of prior collect phases to store in buffer")
+    parser.add_argument("--buffer-history", "-b", type=int, default=2, help="Number of prior collect phases to store in buffer")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -55,12 +55,17 @@ def parse_args():
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--target-kl-ros", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--ros-update-freq", type=int, default=16, help="Number of timesteps between ROS updates")
+    parser.add_argument("--ros-reset-freq", type=int, default=1, help="Reset ROS policy to target policy every ros_reset_freq updates")
+    parser.add_argument("--ros-update-epochs", type=int, default=256, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
+    parser.add_argument("--compute-sampling-error", type=float, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="results will be saved to <results_dir>/<env_id>/<subdir>/")
+    parser.add_argument("--policy-path", type=str, default=None, help="Path to pretrained policy")
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -244,7 +249,7 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
     b_inds = np.arange(batch_size)
     clipfracs = []
 
-    for epoch in range(args.update_epochs):
+    for epoch in range(args.ros_update_epochs):
         np.random.shuffle(b_inds)
         for start in range(0, batch_size, minibatch_size):
             end = start + minibatch_size
@@ -261,12 +266,12 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
                 clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
             # Policy loss
-            pg_loss1 = -ratio
-            pg_loss2 = -torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+            pg_loss1 = ratio
+            pg_loss2 = torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             entropy_loss = entropy.mean()
-            loss = pg_loss - args.ent_coef_ros * entropy_loss
+            loss = pg_loss
 
             optimizer_ros.zero_grad()
             loss.backward()
@@ -350,6 +355,7 @@ def main():
 
     timesteps = []
     sampling_error = []
+    kl_ros_target = []
     entropy_target = []
     entropy_ros = []
 
@@ -430,8 +436,9 @@ def main():
         update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
         if args.ros:
             # Set ROS policy equal to current target policy
-            for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
-                source_param.data.copy_(dump_param.data)
+            if update % args.ros_reset_freq:
+                for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
+                    source_param.data.copy_(dump_param.data)
 
             # ROS behavior update
             update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size, writer)
@@ -443,40 +450,47 @@ def main():
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
             eval_module.evaluate(global_step, train_env=envs)
             # eval_module_ros.evaluate(global_step)
+        if args.compute_sampling_error:
+            if update % (args.eval_freq) == 0:
+                agent_mle = copy.deepcopy(agent)
+                optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
 
-        if update % (2*args.eval_freq) == 0:
-            # agent_mle = copy.deepcopy(agent)
-            # agent_mle = Agent(envs).to(device)
-            #
-            # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-2, eps=1e-5)
-            #
-            # for i in range(10000):
-            #     _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
-            #     loss = -torch.mean(logprobs_mle)
-            #     print(loss)
-            #     optimizer_mle.zero_grad()
-            #     loss.backward()
-            #     optimizer_mle.step()
+                b_obs = obs.reshape(-1, obs_dim)
+                b_actions = actions.reshape(-1)
 
-            with torch.no_grad():
-                _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
-                # logratio = logprobs_mle - logprobs
-                # ratio = logratio.exp()
-                # approx_kl = ((ratio - 1) - logratio).mean()
-                # print(loss, approx_kl)
+                for i in range(10000):
+                    _, logprobs_mle, _, _ = agent_mle.get_action_and_value(b_obs, b_actions)
+                    loss = -torch.mean(logprobs_mle)
 
-                _, logprobs_ros, ent_ros, _ = agent_ros.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+                    optimizer_mle.zero_grad()
+                    loss.backward()
+                    optimizer_mle.step()
 
-                # sampling_error.append(approx_kl.item())
-                entropy_target.append(ent_target.mean().item())
-                entropy_ros.append(ent_ros.mean().item())
-                timesteps.append(global_step)
+                with torch.no_grad():
+                    _, logprobs_target, ent_target, _ = agent.get_action_and_value(b_obs, b_actions)
+                    logratio = logprobs_mle - logprobs_target
+                    ratio = logratio.exp()
+                    approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+                    print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
+                    _, logprobs_ros, ent_ros, _ = agent_ros.get_action_and_value(b_obs, b_actions)
 
-                np.savez(f'{args.save_dir}/stats.npz',
-                         t=np.array(timesteps),
-                         sampling_error=np.array(sampling_error),
-                         entropy_target=np.array(entropy_target),
-                         entropy_ros=np.array(entropy_ros))
+                    logratio = logprobs_ros - logprobs_target
+                    ratio = logratio.exp()
+                    approx_kl_ros_target = ((ratio - 1) - logratio).mean()
+                    print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
+
+                    sampling_error.append(approx_kl_mle_target.item())
+                    kl_ros_target.append(approx_kl_ros_target.item())
+                    entropy_target.append(ent_target.mean().item())
+                    entropy_ros.append(ent_ros.mean().item())
+                    timesteps.append(global_step)
+
+                    np.savez(f'{args.save_dir}/stats.npz',
+                             t=timesteps,
+                             sampling_error=sampling_error,
+                             kl_ros_target=kl_ros_target,
+                             entropy_target=entropy_target,
+                             entropy_ros=entropy_ros)
     envs.close()
 
 if __name__ == "__main__":
