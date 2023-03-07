@@ -53,11 +53,13 @@ def parse_args():
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--compute-sampling-error", type=float, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="results will be saved to <results_dir>/<env_id>/<subdir>/")
+    parser.add_argument("--policy-path", type=str, default=None, help="Path to pretrained policy")
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -257,8 +259,10 @@ if __name__ == "__main__":
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device)
+    if args.policy_path:
+        agent = torch.load(args.policy_path)
 
+    eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device)
 
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
@@ -341,37 +345,40 @@ if __name__ == "__main__":
             eval_module.evaluate(global_step, train_env=envs)
             # eval_module_ros.evaluate(global_step)
 
+            if args.compute_sampling_error:
+                agent_mle = Agent(envs).to(device)
+                optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
 
-        if update % (2*args.eval_freq) == 0:
-            # agent_mle = copy.deepcopy(agent)
-            # agent_mle = Agent(envs).to(device)
-            #
-            # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
-            #
-            # for i in range(1000):
-            #     _, logprobs_mle, _, _ = agent_mle.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
-            #     loss = -torch.mean(logprobs_mle)
-            #
-            #     optimizer_mle.zero_grad()
-            #     loss.backward()
-            #     optimizer_mle.step()
+                b_obs = obs.reshape(-1, obs_dim)
+                b_actions = actions.reshape(-1, action_dim)
 
-            with torch.no_grad():
+                for i in range(10000):
+                    _, logprobs_mle, _, _ = agent_mle.get_action_and_value(b_obs, b_actions)
+                    loss = -torch.mean(logprobs_mle)
 
-                _, logprobs_target, ent_target, _ = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
-                # logratio = logprobs_mle - logprobs
-                # ratio = logratio.exp()
-                # approx_kl = ((ratio - 1) - logratio).mean()
-                # print(loss, approx_kl)
+                    if i % 100 == 0:
+                        print(i, loss.item())
 
-                # sampling_error.append(approx_kl.item())
-                entropy_target.append(ent_target.mean().item())
-                timesteps.append(global_step)
+                    optimizer_mle.zero_grad()
+                    loss.backward()
+                    optimizer_mle.step()
 
-                np.savez(f'{args.save_dir}/stats.npz',
-                         timesteps=np.array(timesteps),
-                         sampling_error=np.array(sampling_error),
-                         entropy_target=np.array(entropy_target))
+                with torch.no_grad():
+
+                    _, logprobs_target, ent_target, _ = agent.get_action_and_value(b_obs, b_actions)
+                    logratio = logprobs_mle - logprobs
+                    ratio = logratio.exp()
+                    approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+                    print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
+
+                    sampling_error.append(approx_kl_mle_target.item())
+                    entropy_target.append(ent_target.mean().item())
+                    timesteps.append(global_step)
+
+                    np.savez(f'{args.save_dir}/stats.npz',
+                             timesteps=timesteps,
+                             sampling_error=sampling_error,
+                             entropy_target=entropy_target)
 
     envs.close()
     # writer.close()

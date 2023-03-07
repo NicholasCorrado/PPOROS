@@ -102,7 +102,8 @@ class Evaluate:
 
             if mean_reward > self.best_mean_reward:
                 print("New best mean reward!")
-                torch.save(self.model, os.path.join(self.best_model_save_path, "best_model"))
+                torch.save(self.model, os.path.join(self.best_model_save_path, "best_model.zip"))
+                # self.eval_env.save(os.path.join(self.best_model_save_path, "vecnormalize.zip"))
                 self.best_mean_reward = mean_reward
 
     def _evaluate(self):

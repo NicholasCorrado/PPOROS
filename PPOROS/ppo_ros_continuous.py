@@ -323,6 +323,9 @@ def main():
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
+    if args.policy_path:
+        agent = torch.load(args.policy_path)
+
     # ROS behavior agent
     agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
     optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.learning_rate, eps=1e-5)
@@ -450,17 +453,19 @@ def main():
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
             eval_module.evaluate(global_step, train_env=envs)
             # eval_module_ros.evaluate(global_step)
-        if args.compute_sampling_error:
-            if update % (args.eval_freq) == 0:
+            if args.compute_sampling_error:
                 agent_mle = copy.deepcopy(agent)
                 optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
 
                 b_obs = obs.reshape(-1, obs_dim)
-                b_actions = actions.reshape(-1)
+                b_actions = actions.reshape(-1, action_dim)
 
                 for i in range(10000):
                     _, logprobs_mle, _, _ = agent_mle.get_action_and_value(b_obs, b_actions)
                     loss = -torch.mean(logprobs_mle)
+
+                    if i % 100 == 0:
+                        print(i, loss)
 
                     optimizer_mle.zero_grad()
                     loss.backward()
