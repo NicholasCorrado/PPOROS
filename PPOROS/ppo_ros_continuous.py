@@ -157,14 +157,13 @@ class Agent(nn.Module):
         return action_mean
 
 def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
-
     # flatten the batch
-    b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
-    b_logprobs = logprobs.reshape(-1)
-    b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
-    b_advantages = advantages.reshape(-1)
-    b_returns = returns.reshape(-1)
-    b_values = values.reshape(-1)
+    b_obs = obs[:global_step].reshape((-1,) + envs.single_observation_space.shape)
+    b_logprobs = logprobs[:global_step].reshape(-1)
+    b_actions = actions[:global_step].reshape((-1,) + envs.single_action_space.shape)
+    b_advantages = advantages[:global_step].reshape(-1)
+    b_returns = returns[:global_step].reshape(-1)
+    b_values = values[:global_step].reshape(-1)
 
     # Optimizing the policy and value network
     batch_size = b_obs.shape[0]
@@ -184,7 +183,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
             with torch.no_grad():
                 # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-logratio).mean()
+                # old_approx_kl = (-logratio).mean()
                 approx_kl = ((ratio - 1) - logratio).mean()
                 clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
@@ -223,10 +222,6 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
         if args.target_kl is not None:
             if approx_kl > args.target_kl:
                 break
-
-    y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-    var_y = np.var(y_true)
-    explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
 def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_step, args, buffer_size, writer):
 
@@ -277,6 +272,7 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
             nn.utils.clip_grad_norm_(agent_ros.parameters(), args.max_grad_norm)
             optimizer_ros.step()
 
+        # print(approx_kl)
         if args.target_kl_ros is not None:
             if approx_kl > args.target_kl_ros:
                 break
