@@ -270,7 +270,6 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
             pg_loss2 = torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-            entropy_loss = entropy.mean()
             loss = pg_loss
 
             optimizer_ros.zero_grad()
