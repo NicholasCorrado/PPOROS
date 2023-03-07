@@ -323,7 +323,7 @@ def main():
 
     # ROS behavior agent
     agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
-    optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.learning_rate, eps=1e-5)
+    optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.learning_rate_ros, eps=1e-5)
 
     # Evaluation modules
     eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device)
