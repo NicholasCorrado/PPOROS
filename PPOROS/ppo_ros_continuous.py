@@ -404,10 +404,10 @@ def main():
             indices = (np.arange(buffer_size) + buffer_pos) % buffer_size
 
         # obs = normalize_obs(obs_rms, obs_buffer.clone()[indices])
-        obs = obs_buffer.clone()[indices]
-        actions = actions_buffer.clone()[indices]
-        rewards = rewards_buffer.clone()[indices]
-        dones = dones_buffer.clone()[indices]
+        obs = obs_buffer[indices]
+        actions = actions_buffer[indices]
+        rewards = rewards_buffer[indices]
+        dones = dones_buffer[indices]
 
         with torch.no_grad():
             _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
