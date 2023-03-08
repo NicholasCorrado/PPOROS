@@ -57,7 +57,7 @@ def parse_args():
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-update-freq", type=int, default=16, help="Number of timesteps between ROS updates")
     parser.add_argument("--ros-reset-freq", type=int, default=1, help="Reset ROS policy to target policy every ros_reset_freq updates")
-    parser.add_argument("--ros-update-epochs", type=int, default=256, help="the K epochs to update the policy")
+    parser.add_argument("--ros-update-epochs", type=int, default=1, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
     parser.add_argument("--compute-sampling-error", type=float, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
@@ -279,9 +279,11 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
 
 def normalize_obs(obs_rms, obs):
     """Normalises the observation using the running mean and variance of the observations."""
-    print(obs_rms.mean)
     return torch.Tensor((obs.detach().numpy() - obs_rms.mean) / np.sqrt(obs_rms.var + 1e-8))
 
+def normalize_reward(return_rms, rewards):
+    """Normalizes the rewards with the running mean rewards and their variance."""
+    return rewards / np.sqrt(return_rms.var + 1e-8)
 
 def main():
     args = parse_args()
@@ -338,6 +340,7 @@ def main():
     actions_buffer = torch.zeros((buffer_size, args.num_envs) + envs.single_action_space.shape).to(device)
     rewards_buffer = torch.zeros((buffer_size, args.num_envs)).to(device)
     dones_buffer = torch.zeros((buffer_size, args.num_envs)).to(device)
+    # terminateds_buffer = np.zeros((buffer_size, args.num_envs))
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -345,8 +348,8 @@ def main():
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
+    # next_terminated = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
-    video_filenames = set()
 
     obs_dim = envs.single_observation_space.shape[0]
     action_dim = envs.single_action_space.shape[0]
@@ -360,6 +363,13 @@ def main():
     # agent_mle = copy.deepcopy(agent)
     # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
 
+    # obs_rms = RunningMeanStd(shape=envs.single_observation_space.shape)
+    # return_rms = RunningMeanStd(shape=())
+    # returns = np.zeros(args.num_envs)
+
+    env_reward_normalize = envs.envs[0].env
+    env_obs_normalize = envs.envs[0].env.env.env
+
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
@@ -369,14 +379,11 @@ def main():
 
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
-            # obs_rms.update(next_obs.detach().numpy()) # update normalization statistics
-            obs_buffer[buffer_pos] = next_obs
+            obs_buffer[buffer_pos] = env_obs_normalize.unnormalize(next_obs) # store unnormalized obs
             dones_buffer[buffer_pos] = next_done
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                # action, _, _, _ = agent.get_action_and_value(next_obs)
-                # action, _, _, _ = agent.get_action_and_value(normalize_obs(obs_rms, next_obs))
                 if args.ros and np.random.random() < args.ros_mixture_prob:
                     action, _, _, _ = agent_ros.get_action_and_value(next_obs)
                 else:
@@ -386,6 +393,7 @@ def main():
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminated, truncated, infos = envs.step(action.cpu().numpy())
             done = np.logical_or(terminated, truncated)
+            reward = env_reward_normalize.unnormalize(reward)
             rewards_buffer[buffer_pos] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
 
@@ -406,6 +414,14 @@ def main():
         actions = actions_buffer[indices]
         rewards = rewards_buffer[indices]
         dones = dones_buffer[indices]
+
+        env_obs_normalize.set_update(False)
+        obs = env_obs_normalize.normalize(obs).float()
+        env_obs_normalize.set_update(True)
+
+        env_obs_normalize.set_update(False)
+        rewards = env_reward_normalize.normalize(rewards).float()
+        env_obs_normalize.set_update(True)
 
         with torch.no_grad():
             _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
