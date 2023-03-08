@@ -1,5 +1,6 @@
 import copy
 import os
+import pickle
 
 import numpy as np
 import torch
@@ -75,6 +76,9 @@ class Evaluate:
     def evaluate(self, t, train_env):
         # if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
 
+        env_reward_normalize = train_env.envs[0].env
+        env_obs_normalize = train_env.envs[0].env.env.env
+
         self.eval_env = copy.deepcopy(train_env)
         self.eval_env.envs[0].set_update(False)
         returns, successes = self._evaluate()
@@ -104,6 +108,12 @@ class Evaluate:
                 print("New best mean reward!")
                 torch.save(self.model, os.path.join(self.best_model_save_path, "best_model.zip"))
                 # self.eval_env.save(os.path.join(self.best_model_save_path, "vecnormalize.zip"))
+                with open(f'{self.best_model_save_path}/env_obs_normalize', 'wb') as f:
+                    pickle.dump(env_obs_normalize.obs_rms, f)
+                with open(f'{self.best_model_save_path}/env_reward_normalize', 'wb') as f:
+                    pickle.dump(env_reward_normalize.return_rms, f)
+
+
                 self.best_mean_reward = mean_reward
 
     def _evaluate(self):

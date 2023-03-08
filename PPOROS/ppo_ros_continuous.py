@@ -2,6 +2,7 @@
 import argparse
 import copy
 import os
+import pickle
 import random
 import time
 from distutils.util import strtobool
@@ -59,6 +60,7 @@ def parse_args():
     parser.add_argument("--ros-reset-freq", type=int, default=1, help="Reset ROS policy to target policy every ros_reset_freq updates")
     parser.add_argument("--ros-update-epochs", type=int, default=1, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
+    parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
     parser.add_argument("--compute-sampling-error", type=float, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
@@ -66,10 +68,13 @@ def parse_args():
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="results will be saved to <results_dir>/<env_id>/<subdir>/")
     parser.add_argument("--policy-path", type=str, default=None, help="Path to pretrained policy")
+    parser.add_argument("--normalization-dir", type=str, default=None, help="Directory contatining normalization stats")
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
+    args.ros_minibatch_size = int(args.batch_size // args.ros_num_minibatches)
+
     # fmt: on
 
     if args.seed is None:
@@ -238,7 +243,7 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
 
     # Optimizing the policy and value network
     batch_size = b_obs.shape[0]
-    minibatch_size = int(batch_size // args.num_minibatches)
+    minibatch_size = int(batch_size // args.ros_num_minibatches)
 
     # Optimizing the policy and value network
     b_inds = np.arange(batch_size)
@@ -363,6 +368,15 @@ def main():
 
     env_reward_normalize = envs.envs[0].env
     env_obs_normalize = envs.envs[0].env.env.env
+
+    if args.normalization_dir:
+        with open(f'{args.normalization_dir}/env_obs_normalize', 'rb') as f:
+            obs_rms = pickle.load(f)
+            env_obs_normalize.obs_rms = obs_rms
+
+        with open(f'{args.normalization_dir}/env_reward_normalize', 'rb') as f:
+            return_rms = pickle.load(f)
+            env_reward_normalize.return_rms = return_rms
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.

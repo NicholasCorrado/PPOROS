@@ -1,6 +1,7 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy
 import argparse
 import os
+import pickle
 import random
 import time
 from distutils.util import strtobool
@@ -32,7 +33,7 @@ def parse_args():
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="whether to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="Hopper-v4", help="the id of the environment")
+    parser.add_argument("--env-id", type=str, default="Walker2d-v4", help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="total timesteps of the experiments")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
     parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
@@ -60,6 +61,7 @@ def parse_args():
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="results will be saved to <results_dir>/<env_id>/<subdir>/")
     parser.add_argument("--policy-path", type=str, default=None, help="Path to pretrained policy")
+    parser.add_argument("--normalization-dir", type=str, default=None, help="Directory contatining normalization stats")
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -291,6 +293,18 @@ if __name__ == "__main__":
 
     obs_dim = envs.single_observation_space.shape[0]
     action_dim = envs.single_action_space.shape[0]
+
+    env_reward_normalize = envs.envs[0].env
+    env_obs_normalize = envs.envs[0].env.env.env
+
+    if args.normalization_dir:
+        with open(f'{args.normalization_dir}/env_obs_normalize', 'rb') as f:
+            obs_rms = pickle.load(f)
+            env_obs_normalize.obs_rms = obs_rms
+
+        with open(f'{args.normalization_dir}/env_reward_normalize', 'rb') as f:
+            return_rms = pickle.load(f)
+            env_reward_normalize.return_rms = return_rms
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
