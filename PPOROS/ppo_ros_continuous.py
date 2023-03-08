@@ -340,7 +340,6 @@ def main():
     actions_buffer = torch.zeros((buffer_size, args.num_envs) + envs.single_action_space.shape).to(device)
     rewards_buffer = torch.zeros((buffer_size, args.num_envs)).to(device)
     dones_buffer = torch.zeros((buffer_size, args.num_envs)).to(device)
-    # terminateds_buffer = np.zeros((buffer_size, args.num_envs))
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -348,7 +347,6 @@ def main():
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
-    # next_terminated = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
 
     obs_dim = envs.single_observation_space.shape[0]
@@ -362,10 +360,6 @@ def main():
 
     # agent_mle = copy.deepcopy(agent)
     # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
-
-    # obs_rms = RunningMeanStd(shape=envs.single_observation_space.shape)
-    # return_rms = RunningMeanStd(shape=())
-    # returns = np.zeros(args.num_envs)
 
     env_reward_normalize = envs.envs[0].env
     env_obs_normalize = envs.envs[0].env.env.env
