@@ -13,8 +13,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import yaml
-from gymnasium.wrappers.normalize import RunningMeanStd
 from torch.distributions.normal import Normal
+from torch.distributions.beta import Beta
 
 from PPOROS.evaluate import Evaluate
 from PPOROS.utils import NormalizeObservation, NormalizeReward, get_latest_run_id
@@ -36,6 +36,7 @@ def parse_args():
     # Algorithm specific arguments
     parser.add_argument("--env-id", type=str, default="Hopper-v4", help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="total timesteps of the experiments")
+    parser.add_argument("--beta", type=int, default=False, help="Sample actions from Beta distribution rather than Gaussian")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
     parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
@@ -53,6 +54,7 @@ def parse_args():
     parser.add_argument("--ent-coef-ros", type=float, default=0.0, help="coefficient of the entropy in ros update")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
+    parser.add_argument("--clip-actions", type=float, default=True, help="Clip actions to [-1, +1]")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--target-kl-ros", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
@@ -148,21 +150,56 @@ class Agent(nn.Module):
     def get_value(self, x):
         return self.critic(x)
 
-    def get_action_and_value(self, x, action=None, clip=True):
+    def get_action_and_value(self, x, action=None):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         if action is None:
             action = probs.sample()
-        if clip:
-            action = action.clamp(min=-1, max=+1)
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
 
-    def get_action(self, x, clip=True):
+    def get_action(self, x):
         action_mean = self.actor_mean(x)
-        if clip:
-            action_mean = action_mean.clamp(min=-1, max=+1)
+        return action_mean
+
+
+class AgentBeta(nn.Module):
+    def __init__(self, envs):
+        super().__init__()
+        self.critic = nn.Sequential(
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 1), std=1.0),
+        )
+        self.net = nn.Sequential(
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 2*np.prod(envs.single_action_space.shape)), std=0.01),
+        )
+        self.action_dim = envs.single_action_space.shape[0]
+
+    def get_value(self, x):
+        return self.critic(x)
+
+    def get_action_and_value(self, x, action=None):
+        net_output = self.net(x)
+        alpha = torch.exp(net_output[:, :self.action_dim])
+        beta = torch.exp(net_output[:, self.action_dim:])
+        probs = Beta(alpha, beta)
+        if action is None:
+            action = probs.sample()
+        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
+
+    def get_action(self, x):
+        net_output = self.net(x)
+        alpha = torch.exp(net_output[:, :self.action_dim])
+        beta = torch.exp(net_output[:, self.action_dim:])
+        action_mean = alpha / (alpha+beta)
         return action_mean
 
 def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
@@ -326,7 +363,10 @@ def main():
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
     # PPO target agent
-    agent = Agent(envs).to(device)
+    if args.beta:
+        agent = Agent(envs).to(device)
+    else:
+        agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     if args.policy_path:

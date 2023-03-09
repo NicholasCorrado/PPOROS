@@ -13,6 +13,7 @@ import torch.nn as nn
 import torch.optim as optim
 import yaml
 from gymnasium.wrappers.normalize import RunningMeanStd
+from torch.distributions import Beta
 from torch.distributions.normal import Normal
 
 from PPOROS.evaluate import Evaluate
@@ -35,6 +36,7 @@ def parse_args():
     # Algorithm specific arguments
     parser.add_argument("--env-id", type=str, default="Walker2d-v4", help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="total timesteps of the experiments")
+    parser.add_argument("--beta", type=int, default=False, help="Sample actions from Beta distribution rather than Gaussian")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
     parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
@@ -148,6 +150,45 @@ class Agent(nn.Module):
 
     def get_action(self, x):
         action_mean = self.actor_mean(x)
+        return action_mean
+
+
+class AgentBeta(nn.Module):
+    def __init__(self, envs):
+        super().__init__()
+        self.critic = nn.Sequential(
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 1), std=1.0),
+        )
+        self.net = nn.Sequential(
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 2*np.prod(envs.single_action_space.shape)), std=0.01),
+        )
+        self.action_dim = envs.single_action_space.shape[0]
+
+    def get_value(self, x):
+        return self.critic(x)
+
+    def get_action_and_value(self, x, action=None):
+        net_output = self.net(x)
+        alpha = torch.exp(net_output[:, :self.action_dim])
+        beta = torch.exp(net_output[:, self.action_dim:])
+        probs = Beta(alpha, beta)
+        if action is None:
+            action = probs.sample()
+        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
+
+    def get_action(self, x):
+        net_output = self.net(x)
+        alpha = torch.exp(net_output[:, :self.action_dim])
+        beta = torch.exp(net_output[:, self.action_dim:])
+        action_mean = alpha / (alpha+beta)
         return action_mean
 
 def update_ppo():
