@@ -364,7 +364,7 @@ def main():
 
     # PPO target agent
     if args.beta:
-        agent = Agent(envs).to(device)
+        agent = AgentBeta(envs).to(device)
     else:
         agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
