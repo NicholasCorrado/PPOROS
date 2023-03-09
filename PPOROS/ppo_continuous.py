@@ -369,8 +369,8 @@ if __name__ == "__main__":
                     _, logprobs_mle, _, _ = agent_mle.get_action_and_value(b_obs, b_actions)
                     loss = -torch.mean(logprobs_mle)
 
-                    if i % 100 == 0:
-                        print(i, loss.item())
+                    # if i % 100 == 0:
+                    #     print(i, loss.item())
 
                     optimizer_mle.zero_grad()
                     loss.backward()
