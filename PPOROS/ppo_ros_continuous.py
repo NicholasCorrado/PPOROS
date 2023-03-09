@@ -61,7 +61,7 @@ def parse_args():
     parser.add_argument("--ros-update-epochs", type=int, default=1, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
     parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
-    parser.add_argument("--compute-sampling-error", type=float, default=False, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
@@ -334,6 +334,7 @@ def main():
 
     # Evaluation modules
     eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device)
+    eval_module_ros = Evaluate(model=agent_ros, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device, suffix='ros')
 
 
     history_k = args.buffer_history
@@ -471,7 +472,8 @@ def main():
             current_time = time.time() - start_time
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
             eval_module.evaluate(global_step, train_env=envs)
-            # eval_module_ros.evaluate(global_step)
+            eval_module_ros.evaluate(global_step, train_env=envs)
+
             if args.compute_sampling_error:
                 agent_mle = copy.deepcopy(agent)
                 optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
