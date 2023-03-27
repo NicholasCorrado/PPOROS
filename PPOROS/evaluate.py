@@ -44,7 +44,7 @@ class Evaluate:
         eval_freq: int = 10000,
         log_path: str = None,
         suffix: str = '',
-        best_model_save_path: str = None,
+        save_model: bool = False,
         deterministic: bool = True,
         device=None,
     ):
@@ -55,6 +55,7 @@ class Evaluate:
         self.deterministic = deterministic
         self.device = device
 
+        self.save_model = save_model
         self.model = model
         self.eval_env = eval_env
         self.best_model_save_path = log_path
@@ -106,12 +107,12 @@ class Evaluate:
 
             if mean_reward > self.best_mean_reward:
                 print("New best mean reward!")
-                torch.save(self.model, os.path.join(self.best_model_save_path, "best_model.zip"))
-                # self.eval_env.save(os.path.join(self.best_model_save_path, "vecnormalize.zip"))
-                with open(f'{self.best_model_save_path}/env_obs_normalize', 'wb') as f:
-                    pickle.dump(env_obs_normalize.obs_rms, f)
-                with open(f'{self.best_model_save_path}/env_reward_normalize', 'wb') as f:
-                    pickle.dump(env_reward_normalize.return_rms, f)
+                if self.save_model:
+                    torch.save(self.model, os.path.join(self.best_model_save_path, "best_model.zip"))
+                    with open(f'{self.best_model_save_path}/env_obs_normalize', 'wb') as f:
+                        pickle.dump(env_obs_normalize.obs_rms, f)
+                    with open(f'{self.best_model_save_path}/env_reward_normalize', 'wb') as f:
+                        pickle.dump(env_reward_normalize.return_rms, f)
 
 
                 self.best_mean_reward = mean_reward
