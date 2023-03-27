@@ -25,7 +25,7 @@ def parse_args():
     # fmt: off
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"), help="the name of this experiment")
-    parser.add_argument("--seed", type=int, default=np.random.randint(2**31-1), help="seed of the experiment")
+    parser.add_argument("--seed", type=int, default=0, help="seed of the experiment")
     parser.add_argument("--run-id", type=int, default=None)
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, cuda will be enabled by default")
@@ -55,7 +55,7 @@ def parse_args():
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--clip-actions", type=float, default=True, help="Clip actions to [-1, +1]")
-    parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
+    parser.add_argument("--target-kl", type=float, default=0.03, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-learning-rate", "-ros-lr", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
