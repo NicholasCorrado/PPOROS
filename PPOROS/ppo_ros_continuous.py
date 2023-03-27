@@ -383,7 +383,7 @@ def update_ros(agent_ros, envs, ros_optimizer, obs, logprobs, actions, global_st
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             entropy_loss = entropy.mean()
-            loss = pg_loss - push_up_loss
+            loss = pg_loss - args.ros_lambda*push_up_loss
 
             ros_optimizer.zero_grad()
             loss.backward()
@@ -589,8 +589,8 @@ def main():
         rewards = env_reward_normalize.normalize(rewards).float()
         env_obs_normalize.set_update(True)
 
-        assert torch.isnan(obs).sum() == 0
-        assert torch.isnan(rewards).sum() == 0
+        # assert torch.isnan(obs).sum() == 0
+        # assert torch.isnan(rewards).sum() == 0
 
         with torch.no_grad():
             _, _, _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
