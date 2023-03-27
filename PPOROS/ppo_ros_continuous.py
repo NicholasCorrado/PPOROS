@@ -64,7 +64,7 @@ def parse_args():
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
     parser.add_argument("--ros-target-kl", type=float, default=0.03, help="the target KL divergence threshold")
     parser.add_argument("--ros-num-actions", type=int, default=10, help="the target KL divergence threshold")
-    parser.add_argument("--ros-lambda", type=int, default=1, help="the target KL divergence threshold")
+    parser.add_argument("--ros-lambda", type=float, default=1, help="the target KL divergence threshold")
 
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
@@ -631,8 +631,12 @@ def main():
         if update % args.eval_freq == 0:
             current_time = time.time() - start_time
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
-            eval_module.evaluate(global_step, train_env=envs)
-            eval_module_ros.evaluate(global_step, train_env=envs)
+            target_ret, target_std = eval_module.evaluate(global_step, train_env=envs)
+            ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs)
+
+            if args.track:
+                writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
+                writer.add_scalar("charts/ros_eval_return", ros_ret, global_step)
 
             if args.compute_sampling_error:
                 agent_mle = copy.deepcopy(agent)
