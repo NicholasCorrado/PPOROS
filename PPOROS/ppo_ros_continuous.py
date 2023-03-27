@@ -15,7 +15,7 @@ import torch.optim as optim
 import yaml
 from torch.distributions.normal import Normal
 from torch.distributions.beta import Beta
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 
 from PPOROS.evaluate import Evaluate
 from PPOROS.utils import NormalizeObservation, NormalizeReward, get_latest_run_id
@@ -29,7 +29,7 @@ def parse_args():
     parser.add_argument("--run-id", type=int, default=None)
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, this experiment will be tracked with Weights and Biases")
+    parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="if toggled, this experiment will be tracked with Weights and Biases")
     parser.add_argument("--wandb-project-name", type=str, default="cleanRL", help="the wandb's project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="the entity (team) of wandb's project")
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="whether to capture videos of the agent performances (check out `videos` folder)")
@@ -62,8 +62,8 @@ def parse_args():
     parser.add_argument("--ros-reset-freq", type=int, default=1, help="Reset ROS policy to target policy every ros_reset_freq updates")
     parser.add_argument("--ros-update-epochs", type=int, default=1, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
-    parser.add_argument("--ros-target-kl", type=float, default=None, help="the target KL divergence threshold")
-    parser.add_argument("--ros-num-actions", type=int, default=None, help="the target KL divergence threshold")
+    parser.add_argument("--ros-target-kl", type=float, default=0.03, help="the target KL divergence threshold")
+    parser.add_argument("--ros-num-actions", type=int, default=10, help="the target KL divergence threshold")
     parser.add_argument("--ros-lambda", type=int, default=1, help="the target KL divergence threshold")
 
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
@@ -539,8 +539,9 @@ def main():
             with torch.no_grad():
                 if args.ros and np.random.random() < args.ros_mixture_prob:
                     action, action_mean, action_std, logprob_ros, entropy, _ = agent_ros.get_action_and_value(next_obs)
-                    writer.add_scalar("ros/action_mean", action_mean.detach().mean().item(), global_step)
-                    writer.add_scalar("ros/action_std", action_std.detach().mean().item(), global_step)
+                    if args.track:
+                        writer.add_scalar("ros/action_mean", action_mean.detach().mean().item(), global_step)
+                        writer.add_scalar("ros/action_std", action_std.detach().mean().item(), global_step)
                 else:
                     action, action_mean, action_std, _, _, _ = agent.get_action_and_value(next_obs)
                 actions_buffer[buffer_pos] = action
@@ -563,8 +564,10 @@ def main():
                 # Skip the envs that are not done
                 if info is None:
                     continue
-                writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+
+                if args.track:
+                    writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
+                    writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
         if global_step < buffer_size:
             indices = np.arange(buffer_pos)
