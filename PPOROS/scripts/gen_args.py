@@ -20,7 +20,7 @@ def gen_args(device, length, arg_generator, **kwargs):
 def ppo_ros(env_id, lr, lr_ros, num_steps, buffer_history):
     subdir = f"history_{buffer_history}/lr_{lr}/lr_ros_{lr_ros}/"
     args = f" ppo_ros_discrete.py --env-id {env_id} -s {subdir} --total-timesteps 500000" \
-           f" -lr {lr} -lr-ros {lr_ros} -b {buffer_history} --num-steps {num_steps}"
+           f" -lr {lr} -ros-lr {lr_ros} -b {buffer_history} --num-steps {num_steps}"
 
     mem = 1
     disk = 7
