@@ -309,10 +309,6 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
             optimizer.step()
 
-        if args.target_kl is not None:
-            if approx_kl > args.target_kl:
-                break
-
         if args.track:
             y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
             var_y = np.var(y_true)
@@ -325,9 +321,16 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             writer.add_scalar("ppo/entropy", entropy_loss.item(), global_step)
             writer.add_scalar("ppo/old_approx_kl", old_approx_kl.item(), global_step)
             writer.add_scalar("ppo/approx_kl", approx_kl.item(), global_step)
+            writer.add_scalar("ppo/epochs", epoch+1, global_step)
             writer.add_scalar("ppo/clipfrac", np.mean(clipfracs), global_step)
             writer.add_scalar("ppo/explained_variance", explained_var, global_step)
             # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+        if args.target_kl is not None:
+            if approx_kl > args.target_kl:
+                break
+
+
 
 
 def update_ros(agent_ros, envs, ros_optimizer, obs, logprobs, actions, global_step, args, buffer_size, writer):
@@ -396,21 +399,19 @@ def update_ros(agent_ros, envs, ros_optimizer, obs, logprobs, actions, global_st
             nn.utils.clip_grad_norm_(agent_ros.parameters(), args.max_grad_norm)
             ros_optimizer.step()
 
-        # print(approx_kl)
-        if args.ros_target_kl is not None:
-            if approx_kl > args.ros_target_kl:
-                break
-
         if args.track:
             writer.add_scalar("ros/learning_rate", ros_optimizer.param_groups[0]["lr"], global_step)
             writer.add_scalar("ros/policy_loss", pg_loss.item(), global_step)
             writer.add_scalar("ros/entropy", entropy_loss.item(), global_step)
             writer.add_scalar("ros/old_approx_kl", old_approx_kl.item(), global_step)
             writer.add_scalar("ros/approx_kl", approx_kl.item(), global_step)
+            writer.add_scalar("ros/epochs", epoch+1, global_step)
             writer.add_scalar("ros/clipfrac", np.mean(clipfracs), global_step)
             writer.add_scalar("ros/push_up_loss", np.mean(clipfracs), global_step)
-
-            # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        # print(approx_kl)
+        if args.ros_target_kl is not None:
+            if approx_kl > args.ros_target_kl:
+                break
 
 
 def normalize_obs(obs_rms, obs):
