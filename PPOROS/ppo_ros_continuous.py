@@ -56,11 +56,11 @@ def parse_args():
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--clip-actions", type=float, default=True, help="Clip actions to [-1, +1]")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
-    parser.add_argument("--target-kl-ros", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-update-freq", type=int, default=16, help="Number of timesteps between ROS updates")
     parser.add_argument("--ros-reset-freq", type=int, default=1, help="Reset ROS policy to target policy every ros_reset_freq updates")
     parser.add_argument("--ros-update-epochs", type=int, default=1, help="the K epochs to update the policy")
+    parser.add_argument("--ros-target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
     parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
@@ -312,6 +312,7 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
             pg_loss2 = torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
+            entropy_loss = entropy.mean()
             loss = pg_loss
 
             optimizer_ros.zero_grad()
@@ -326,8 +327,8 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
             optimizer_ros.step()
 
         # print(approx_kl)
-        if args.target_kl_ros is not None:
-            if approx_kl > args.target_kl_ros:
+        if args.ros_target_kl is not None:
+            if approx_kl > args.ros_target_kl:
                 break
 
 def normalize_obs(obs_rms, obs):
