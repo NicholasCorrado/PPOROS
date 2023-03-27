@@ -16,8 +16,8 @@ from gymnasium.wrappers.normalize import RunningMeanStd
 from torch.distributions import Beta
 from torch.distributions.normal import Normal
 
-from PPOROS.evaluate import Evaluate
-from PPOROS.utils import get_latest_run_id, NormalizeReward, NormalizeObservation
+from evaluate import Evaluate
+from utils import get_latest_run_id, NormalizeReward, NormalizeObservation
 
 
 def parse_args():
