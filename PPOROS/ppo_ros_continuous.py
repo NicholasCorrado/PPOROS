@@ -38,7 +38,6 @@ def parse_args():
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="total timesteps of the experiments")
     parser.add_argument("--beta", type=int, default=False, help="Sample actions from Beta distribution rather than Gaussian")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
-    parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=2048, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--buffer-history", "-b", type=int, default=2, help="Number of prior collect phases to store in buffer")
@@ -57,12 +56,12 @@ def parse_args():
     parser.add_argument("--clip-actions", type=float, default=True, help="Clip actions to [-1, +1]")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
-    parser.add_argument("--ros-update-freq", type=int, default=16, help="Number of timesteps between ROS updates")
+    parser.add_argument("--ros-learning-rate", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
+    parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
     parser.add_argument("--ros-reset-freq", type=int, default=1, help="Reset ROS policy to target policy every ros_reset_freq updates")
     parser.add_argument("--ros-update-epochs", type=int, default=1, help="the K epochs to update the policy")
-    parser.add_argument("--ros-target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
-    parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
+    parser.add_argument("--ros-target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
@@ -382,7 +381,7 @@ def main():
 
     # ROS behavior agent
     agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
-    optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.learning_rate_ros, eps=1e-5)
+    optimizer_ros = optim.Adam(agent_ros.parameters(), lr=args.ros_learning_rate, eps=1e-5)
 
     # Evaluation modules
     eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device)
