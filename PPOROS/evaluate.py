@@ -4,9 +4,6 @@ import pickle
 
 import numpy as np
 import torch
-from stable_baselines3.common.evaluation import evaluate_policy
-from torch import device
-
 
 class Evaluate:
     """

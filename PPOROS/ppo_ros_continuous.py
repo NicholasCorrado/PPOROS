@@ -17,8 +17,8 @@ from torch.distributions.normal import Normal
 from torch.distributions.beta import Beta
 # from torch.utils.tensorboard import SummaryWriter
 
-from PPOROS.evaluate import Evaluate
-from PPOROS.utils import NormalizeObservation, NormalizeReward, get_latest_run_id
+from evaluate import Evaluate
+from utils import NormalizeObservation, NormalizeReward, get_latest_run_id
 
 
 def parse_args():
@@ -426,6 +426,7 @@ def main():
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
         import wandb
+        from torch.utils.tensorboard import SummaryWriter
 
         wandb.init(
             project=args.wandb_project_name,

@@ -14,7 +14,7 @@ tar -xzf ${ENVNAME}.tar.gz -C $ENVDIR
 rm ${ENVNAME}.tar.gz # remove env tarball
 source $ENVDIR/bin/activate
 
-pip install -e .
+#pip install -e .
 
 #cd augment
 #git clone https://github.com/NicholasCorrado/Gymnasium-Robotics.git -b sb3
