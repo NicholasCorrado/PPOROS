@@ -188,8 +188,9 @@ class AgentBeta(nn.Module):
 
     def get_action_and_value(self, x, action=None):
         net_output = self.net(x)
-        alpha = torch.exp(net_output[:, :self.action_dim])
-        beta = torch.exp(net_output[:, self.action_dim:])
+        alpha = 2 + torch.exp(net_output[:, :self.action_dim])
+        beta = 2 + torch.exp(net_output[:, self.action_dim:])
+        # print(torch.mean(torch.norm(alpha, dim=-1)), torch.mean(torch.norm(beta, dim=-1)))
         probs = Beta(alpha, beta)
         if action is None:
             action = probs.sample()
@@ -197,8 +198,8 @@ class AgentBeta(nn.Module):
 
     def get_action(self, x):
         net_output = self.net(x)
-        alpha = torch.exp(net_output[:, :self.action_dim])
-        beta = torch.exp(net_output[:, self.action_dim:])
+        alpha = 2 + torch.exp(net_output[:, :self.action_dim])
+        beta = 2 + torch.exp(net_output[:, self.action_dim:])
         action_mean = alpha / (alpha+beta)
         return action_mean
 
@@ -315,6 +316,12 @@ def update_ros(agent_ros, envs, optimizer_ros, obs, logprobs, actions, global_st
 
             optimizer_ros.zero_grad()
             loss.backward()
+            # grads = [p.grad.detach().numpy() for p in agent_ros.parameters() if p.grad is not None]
+            # for grad in grads:
+            #     grad_norm = np.mean(np.linalg.norm(grad, axis=-1))
+            #     if grad_norm > 1:
+            #         print(grad_norm)
+
             nn.utils.clip_grad_norm_(agent_ros.parameters(), args.max_grad_norm)
             optimizer_ros.step()
 
@@ -430,6 +437,7 @@ def main():
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
+        loss = 0
         for step in range(0, args.num_steps):
             global_step += 1 * args.num_envs
             obs_buffer[buffer_pos] = env_obs_normalize.unnormalize(next_obs) # store unnormalized obs
@@ -438,7 +446,7 @@ def main():
             # ALGO LOGIC: action logic
             with torch.no_grad():
                 if args.ros and np.random.random() < args.ros_mixture_prob:
-                    action, _, _, _ = agent_ros.get_action_and_value(next_obs)
+                    action, logprob_ros, entropy, _ = agent_ros.get_action_and_value(next_obs)
                 else:
                     action, _, _, _ = agent.get_action_and_value(next_obs)
                 actions_buffer[buffer_pos] = action
@@ -456,6 +464,27 @@ def main():
             # Only print when at least 1 env is done
             if "final_info" not in infos:
                 continue
+
+            # # ROS updates
+            # with torch.no_grad():
+            #     _, logprob, _, new_value = agent.get_action_and_value(next_obs, action)
+            # logratio = logprob_ros - logprob
+            # ratio = logratio.exp()
+            #
+            # # Policy loss
+            # pg_loss1 = ratio
+            # pg_loss2 = torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+            # pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+            # if isinstance(loss, torch.Tensor):
+            #     loss = pg_loss
+            # else:
+            #     loss = pg_loss
+            # loss /= (step+1)
+            #
+            # optimizer_ros.zero_grad()
+            # loss.backward()
+            # nn.utils.clip_grad_norm_(agent_ros.parameters(), args.max_grad_norm)
+            # optimizer_ros.step()
 
         if global_step < buffer_size:
             indices = np.arange(buffer_pos)
