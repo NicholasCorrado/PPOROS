@@ -14,6 +14,8 @@ tar -xzf ${ENVNAME}.tar.gz -C $ENVDIR
 rm ${ENVNAME}.tar.gz # remove env tarball
 source $ENVDIR/bin/activate
 
+pip install wandb
+pip install tensorboard
 #pip install -e .
 
 #cd augment

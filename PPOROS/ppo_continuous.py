@@ -259,9 +259,23 @@ def update_ppo():
             if approx_kl > args.target_kl:
                 break
 
-    y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-    var_y = np.var(y_true)
-    explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+    if args.track:
+        y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
+        var_y = np.var(y_true)
+        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
+        # TRY NOT TO MODIFY: record rewards for plotting purposes
+        writer.add_scalar("ppo/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+        writer.add_scalar("ppo/value_loss", v_loss.item(), global_step)
+        writer.add_scalar("ppo/policy_loss", pg_loss.item(), global_step)
+        writer.add_scalar("ppo/entropy", entropy_loss.item(), global_step)
+        writer.add_scalar("ppo/old_approx_kl", old_approx_kl.item(), global_step)
+        writer.add_scalar("ppo/approx_kl", approx_kl.item(), global_step)
+        writer.add_scalar("ppo/epochs", epoch + 1, global_step)
+        writer.add_scalar("ppo/clipfrac", np.mean(clipfracs), global_step)
+        writer.add_scalar("ppo/explained_variance", explained_var, global_step)
+        # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
 
 def normalize_obs(obs_rms, obs):
     """Normalises the observation using the running mean and variance of the observations."""
@@ -271,9 +285,10 @@ def normalize_obs(obs_rms, obs):
 
 if __name__ == "__main__":
     args = parse_args()
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    run_name = (args.save_dir).replace('/','_')
     if args.track:
         import wandb
+        from torch.utils.tensorboard import SummaryWriter
 
         wandb.init(
             project=args.wandb_project_name,
@@ -284,7 +299,13 @@ if __name__ == "__main__":
             # monitor_gym=True, no longer works for gymnasium
             save_code=True,
         )
-    writer = None
+        writer = SummaryWriter(f"{run_name}")
+        writer.add_text(
+            "hyperparameters",
+            "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+        )
+    else:
+        writer = None
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)

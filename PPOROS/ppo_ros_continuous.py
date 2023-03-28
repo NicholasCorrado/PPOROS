@@ -424,7 +424,7 @@ def normalize_reward(return_rms, rewards):
 
 def main():
     args = parse_args()
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    run_name = (args.save_dir).replace('/','_')
     if args.track:
         import wandb
         from torch.utils.tensorboard import SummaryWriter
@@ -438,7 +438,7 @@ def main():
             # monitor_gym=True, no longer works for gymnasium
             save_code=True,
         )
-        writer = SummaryWriter(f"runs/{run_name}")
+        writer = SummaryWriter(f"{run_name}")
         writer.add_text(
             "hyperparameters",
             "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
