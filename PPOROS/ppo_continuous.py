@@ -290,6 +290,7 @@ if __name__ == "__main__":
         import wandb
         from torch.utils.tensorboard import SummaryWriter
 
+        wandb.login(key="7313077863c8908c24cc6058b99c2b2cc35d326b")
         wandb.init(
             project=args.wandb_project_name,
             entity=args.wandb_entity,
