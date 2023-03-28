@@ -63,8 +63,8 @@ def parse_args():
     parser.add_argument("--ros-update-epochs", type=int, default=1, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
     parser.add_argument("--ros-target-kl", type=float, default=0.03, help="the target KL divergence threshold")
-    parser.add_argument("--ros-num-actions", type=int, default=10, help="the target KL divergence threshold")
-    parser.add_argument("--ros-lambda", type=float, default=0.1, help="the target KL divergence threshold")
+    parser.add_argument("--ros-num-actions", type=int, default=20, help="the target KL divergence threshold")
+    parser.add_argument("--ros-lambda", type=float, default=0.001, help="the target KL divergence threshold")
 
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
