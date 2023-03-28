@@ -16,6 +16,7 @@ source $ENVDIR/bin/activate
 
 pip install wandb
 pip install tensorboard
+export WANDB_CONFIG_DIR=$(pwd)/.config/wandb
 #pip install -e .
 
 #cd augment
