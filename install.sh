@@ -14,9 +14,9 @@ tar -xzf ${ENVNAME}.tar.gz -C $ENVDIR
 rm ${ENVNAME}.tar.gz # remove env tarball
 source $ENVDIR/bin/activate
 
-python3 -m pip install wandb
-python3 -m pip install tensorboard
-export WANDB_CONFIG_DIR=$(pwd)/.config/wandb
+#python3 -m pip install wandb
+#python3 -m pip install tensorboard
+#export WANDB_CONFIG_DIR=$(pwd)/.config/wandb
 #pip install -e .
 
 #cd augment
