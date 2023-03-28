@@ -65,6 +65,7 @@ def parse_args():
     parser.add_argument("--ros-target-kl", type=float, default=0.03, help="the target KL divergence threshold")
     parser.add_argument("--ros-num-actions", type=int, default=20, help="the target KL divergence threshold")
     parser.add_argument("--ros-lambda", type=float, default=0.001, help="the target KL divergence threshold")
+    parser.add_argument("--ros-uniform-sampling", type=bool, default=True, help="the target KL divergence threshold")
 
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
@@ -167,44 +168,13 @@ class Agent(nn.Module):
         action_mean = self.actor_mean(x)
         return action_mean
 
-
-
-
-class AgentSquashed(nn.Module):
-    def __init__(self, envs):
-        super().__init__()
-        self.critic = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 1), std=1.0),
-        )
-        self.actor_mean = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, np.prod(envs.single_action_space.shape)), std=0.01),
-        )
-        self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
-
-    def get_value(self, x):
-        return self.critic(x)
-
-    def get_action_and_value(self, x, action=None):
+    def sample_actions(self, x):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
-        if action is None:
-            action = probs.sample()
-        logprobs = probs.log_prob(action).sum(1) - torch.log(1 - torch.tanh(action)).sum(1)
-        return action, action_mean, action_std, logprobs, probs.entropy().sum(1), self.critic(x),
-
-    def get_action(self, x):
-        action_mean = self.actor_mean(x)
-        return action_mean
+        action = probs.sample()
+        return action
 
 
 class AgentBeta(nn.Module):
@@ -333,7 +303,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
 
 
-def update_ros(agent_ros, envs, ros_optimizer, obs, logprobs, actions, global_step, args, buffer_size, writer):
+def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, buffer_size, writer):
 
     # flatten the batch
     if global_step < buffer_size:
@@ -373,8 +343,14 @@ def update_ros(agent_ros, envs, ros_optimizer, obs, logprobs, actions, global_st
 
             push_up_loss = 0
             if args.ros_num_actions:
+                # random_actions = agent.sample_actions(b_actions[mb_inds], args.ros_num_actions)
+                # _, _, _, newlogprob, entropy, _ = agent_ros.get_action_and_value(b_obs[mb_inds], random_actions)
+                # push_up_loss = newlogprob.mean()
                 for i in range(args.ros_num_actions):
-                    random_actions = torch.rand_like(b_actions[mb_inds])*2 - 1 # random actions in [-1, +1]
+                    if args.ros_uniform_sampling:
+                        random_actions = torch.rand_like(b_actions[mb_inds])*2 - 1 # random actions in [-1, +1]
+                    else:
+                        random_actions = agent.sample_actions(b_obs[mb_inds])
                     _, _, _, newlogprob, entropy, _ = agent_ros.get_action_and_value(b_obs[mb_inds], random_actions)
                     push_up_loss = newlogprob.mean()
 
@@ -626,7 +602,7 @@ def main():
                     source_param.data.copy_(dump_param.data)
 
             # ROS behavior update
-            update_ros(agent_ros, envs, ros_optimizer, obs, logprobs, actions, global_step, args, buffer_size, writer)
+            update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, buffer_size, writer)
 
         # if update % 2 == 0:
         #     update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
