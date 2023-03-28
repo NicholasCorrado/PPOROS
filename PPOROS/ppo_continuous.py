@@ -400,6 +400,14 @@ if __name__ == "__main__":
             # Only print when at least 1 env is done
             if "final_info" not in infos:
                 continue
+            for info in infos["final_info"]:
+                # Skip the envs that are not done
+                if info is None:
+                    continue
+
+                if args.track:
+                    writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
+                    writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
         # bootstrap value if not done
         with torch.no_grad():
