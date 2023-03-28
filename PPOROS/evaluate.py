@@ -114,6 +114,7 @@ class Evaluate:
 
                 self.best_mean_reward = mean_reward
 
+        return mean_reward, std_reward
     def _evaluate(self):
         eval_returns = []
         eval_successes = []
