@@ -227,6 +227,12 @@ def update_ppo():
             if args.norm_adv:
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
+            loss = None
+            if args.ros_target_kl is not None:
+                if approx_kl > args.ros_target_kl:
+                    # skipped_updates += 1
+                    continue
+
             # Policy loss
             pg_loss1 = -mb_advantages * ratio
             pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
@@ -255,9 +261,9 @@ def update_ppo():
             nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
             optimizer.step()
 
-        if args.target_kl is not None:
-            if approx_kl > args.target_kl:
-                break
+        # if args.target_kl is not None:
+        #     if approx_kl > args.target_kl:
+        #         break
 
     if args.track:
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
