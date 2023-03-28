@@ -407,8 +407,8 @@ if __name__ == "__main__":
                     continue
 
                 if args.track:
-                    writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                    writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+                    writer.add_scalar("charts/ros_train_ret", info["episode"]["r"], global_step)
+                    writer.add_scalar("charts/episode_length", info["episode"]["l"], global_step)
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -431,7 +431,9 @@ if __name__ == "__main__":
         if update % args.eval_freq == 0:
             current_time = time.time() - start_time
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
-            eval_module.evaluate(global_step, train_env=envs)
+            target_ret, target_std = eval_module.evaluate(global_step, train_env=envs)
+            if args.track:
+                writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
 
             if args.compute_sampling_error:
                 agent_mle = Agent(envs).to(device)

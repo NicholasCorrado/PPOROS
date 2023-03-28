@@ -569,8 +569,8 @@ def main():
                     continue
 
                 if args.track:
-                    writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                    writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+                    writer.add_scalar("charts/ros_train_ret", info["episode"]["r"], global_step)
+                    writer.add_scalar("charts/episode_length", info["episode"]["l"], global_step)
 
         if global_step < buffer_size:
             indices = np.arange(buffer_pos)
