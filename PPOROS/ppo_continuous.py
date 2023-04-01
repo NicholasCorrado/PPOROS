@@ -38,10 +38,8 @@ def parse_args():
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="total timesteps of the experiments")
     parser.add_argument("--beta", type=int, default=False, help="Sample actions from Beta distribution rather than Gaussian")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
-    parser.add_argument("--learning-rate-ros", "-lr-ros", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=2048, help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--buffer-history", "-b", type=int, default=4, help="Number of prior collect phases to store in buffer")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -55,7 +53,6 @@ def parse_args():
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
-    parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
@@ -208,6 +205,7 @@ def update_ppo():
 
     clipfracs = []
     for epoch in range(args.update_epochs):
+        approx_kls = []
         np.random.shuffle(b_inds)
         for start in range(0, batch_size, minibatch_size):
             end = start + minibatch_size
@@ -222,16 +220,11 @@ def update_ppo():
                 old_approx_kl = (-logratio).mean()
                 approx_kl = ((ratio - 1) - logratio).mean()
                 clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+                approx_kls.append(approx_kl)
 
             mb_advantages = b_advantages[mb_inds]
             if args.norm_adv:
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-
-            loss = None
-            if args.ros_target_kl is not None:
-                if approx_kl > args.ros_target_kl:
-                    # skipped_updates += 1
-                    continue
 
             # Policy loss
             pg_loss1 = -mb_advantages * ratio
@@ -261,9 +254,9 @@ def update_ppo():
             nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
             optimizer.step()
 
-        # if args.target_kl is not None:
-        #     if approx_kl > args.target_kl:
-        #         break
+        if args.target_kl is not None:
+            if np.mean(approx_kls) > args.target_kl:
+                break
 
     if args.track:
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
@@ -362,7 +355,6 @@ if __name__ == "__main__":
     timesteps = []
     sampling_error = []
     entropy_target = []
-    entropy_ros = []
 
     obs_dim = envs.single_observation_space.shape[0]
     action_dim = envs.single_action_space.shape[0]
