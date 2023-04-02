@@ -65,7 +65,7 @@ def parse_args():
     parser.add_argument("--ros-ent-coef", type=float, default=0.0, help="coefficient of the entropy in ros update")
     parser.add_argument("--ros-target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros-max-kl", type=float, default=None, help="the target KL divergence threshold")
-    parser.add_argument("--ros-num-actions", type=int, default=10, help="the target KL divergence threshold")
+    parser.add_argument("--ros-num-actions", type=int, default=20, help="the target KL divergence threshold")
     parser.add_argument("--ros-lambda", type=float, default=0.1, help="the target KL divergence threshold")
     parser.add_argument("--ros-uniform-sampling", type=bool, default=True, help="the target KL divergence threshold")
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
