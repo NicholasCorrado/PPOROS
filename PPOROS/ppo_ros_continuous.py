@@ -45,8 +45,9 @@ def parse_args():
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
-    parser.add_argument("--num-minibatches", type=int, default=32, help="the number of mini-batches")
+    parser.add_argument("--num-minibatches", type=int, default=8, help="the number of mini-batches")
     parser.add_argument("--update-epochs", type=int, default=10, help="the K epochs to update the policy")
+    parser.add_argument("--update-freq", type=int, default=1)
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
@@ -62,6 +63,7 @@ def parse_args():
     parser.add_argument("--ros-reset-freq", type=int, default=1, help="Reset ROS policy to target policy every ros_reset_freq updates")
     parser.add_argument("--ros-update-epochs", type=int, default=1, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
+    parser.add_argument("--ros-update-freq", type=int, default=1)
     parser.add_argument("--ros-ent-coef", type=float, default=0.0, help="coefficient of the entropy in ros update")
     parser.add_argument("--ros-target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros-max-kl", type=float, default=None, help="the target KL divergence threshold")
@@ -373,7 +375,9 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                     else:
                         random_actions = agent.sample_actions(b_obs[mb_inds])
                     _, _, _, newlogprob, entropy = agent_ros.get_action_and_info(b_obs[mb_inds], random_actions)
-                    push_up_loss = newlogprob.mean()
+                    # push_up_loss = torch.clamp(newlogprob, 1 - args.ros_clip_coef, 1 + args.ros_clip_coef)
+                    # push_up_loss += push_up_loss.mean()
+                    push_up_loss += newlogprob.mean()
 
                 push_up_loss = push_up_loss/args.ros_num_actions
 
@@ -615,8 +619,9 @@ def main():
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-        update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
-        if args.ros:
+        if update % args.update_freq == 0:
+            update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+        if args.ros and (update % args.ros_update_freq == 0):
             # Set ROS policy equal to current target policy
             if update % args.ros_reset_freq:
                 for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
