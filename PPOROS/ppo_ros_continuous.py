@@ -57,7 +57,8 @@ def parse_args():
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-learning-rate", "-ros-lr", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
-    parser.add_argument("--ros-num-minibatches", type=int, default=8, help="the number of mini-batches")
+    parser.add_argument("--ros-clip-coef", type=float, default=0.1, help="the surrogate clipping coefficient")
+    parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
     parser.add_argument("--ros-reset-freq", type=int, default=1, help="Reset ROS policy to target policy every ros_reset_freq updates")
     parser.add_argument("--ros-update-epochs", type=int, default=1, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
@@ -167,6 +168,15 @@ class Agent(nn.Module):
     def get_action(self, x):
         action_mean = self.actor_mean(x)
         return action_mean
+
+    def get_action_and_info(self, x, action=None):
+        action_mean = self.actor_mean(x)
+        action_logstd = self.actor_logstd.expand_as(action_mean)
+        action_std = torch.exp(action_logstd)
+        probs = Normal(action_mean, action_std)
+        if action is None:
+            action = probs.sample()
+        return action, action_mean, action_std, probs.log_prob(action).sum(1), probs.entropy().sum(1)
 
     def sample_actions(self, x):
         action_mean = self.actor_mean(x)
@@ -335,16 +345,19 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             end = start + minibatch_size
             mb_inds = b_inds[start:end]
 
-            _, _, _, newlogprob, entropy, _ = agent_ros.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+            _, _, _, newlogprob, entropy = agent_ros.get_action_and_info(b_obs[mb_inds], b_actions[mb_inds])
             logratio = newlogprob - b_logprobs[mb_inds]
             ratio = logratio.exp()
 
             with torch.no_grad():
                 # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-logratio).mean()
+                # old_approx_kl = (-logratio).mean()
                 approx_kl = ((ratio - 1) - logratio).mean()
                 approx_kls.append(approx_kl.item())
-                clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+                clipfracs += [((ratio - 1.0).abs() > args.ros_clip_coef).float().mean().item()]
+
+                # if approx_kl > args.ros_target_kl:
+                #     print(global_step, epoch, approx_kl.item())
 
             # loss = None
             # if args.ros_max_kl is not None:
@@ -359,14 +372,14 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                         random_actions = torch.rand_like(b_actions[mb_inds])*2 - 1 # random actions in [-1, +1]
                     else:
                         random_actions = agent.sample_actions(b_obs[mb_inds])
-                    _, _, _, newlogprob, entropy, _ = agent_ros.get_action_and_value(b_obs[mb_inds], random_actions)
+                    _, _, _, newlogprob, entropy = agent_ros.get_action_and_info(b_obs[mb_inds], random_actions)
                     push_up_loss = newlogprob.mean()
 
                 push_up_loss = push_up_loss/args.ros_num_actions
 
             # Policy loss
             pg_loss1 = ratio
-            pg_loss2 = torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+            pg_loss2 = torch.clamp(ratio, 1 - args.ros_clip_coef, 1 + args.ros_clip_coef)
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             entropy_loss = entropy.mean()
@@ -390,10 +403,11 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             if loss:
                 writer.add_scalar("ros/policy_loss", pg_loss.item(), global_step)
                 writer.add_scalar("ros/entropy", entropy_loss.item(), global_step)
-                writer.add_scalar("ros/push_up_loss", np.mean(clipfracs), global_step)
+                writer.add_scalar("ros/push_up_loss", push_up_loss.item(), global_step)
         # print(approx_kl)
-        if args.ros_target_kl is not None:
+        if args.ros_target_kl:
             if avg_kl > args.ros_target_kl:
+                print('Early stop:', avg_kl, args.ros_target_kl)
                 break
 
 
@@ -422,7 +436,7 @@ def main():
             # monitor_gym=True, no longer works for gymnasium
             save_code=True,
         )
-        writer = SummaryWriter(f"{run_name}")
+        writer = SummaryWriter(f"wandb/{run_name}")
         writer.add_text(
             "hyperparameters",
             "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
@@ -631,7 +645,7 @@ def main():
                 b_actions = actions.reshape(-1, action_dim)
 
                 for i in range(10000):
-                    _, logprobs_mle, _, _ = agent_mle.get_action_and_value(b_obs, b_actions)
+                    _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions)
                     loss = -torch.mean(logprobs_mle)
 
                     # if i % 100 == 0:
@@ -642,12 +656,12 @@ def main():
                     optimizer_mle.step()
 
                 with torch.no_grad():
-                    _, logprobs_target, ent_target, _ = agent.get_action_and_value(b_obs, b_actions)
+                    _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions)
                     logratio = logprobs_mle - logprobs_target
                     ratio = logratio.exp()
                     approx_kl_mle_target = ((ratio - 1) - logratio).mean()
                     print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
-                    _, logprobs_ros, ent_ros, _ = agent_ros.get_action_and_value(b_obs, b_actions)
+                    _, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions)
 
                     logratio = logprobs_ros - logprobs_target
                     ratio = logratio.exp()
