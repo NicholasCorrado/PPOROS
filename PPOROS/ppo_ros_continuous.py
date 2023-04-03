@@ -5,6 +5,7 @@ import os
 import pickle
 import random
 import time
+from collections import defaultdict
 from distutils.util import strtobool
 
 import gymnasium as gym
@@ -300,6 +301,8 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
             optimizer.step()
 
+        avg_kl = np.mean(approx_kls)
+
         if args.track:
             y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
             var_y = np.var(y_true)
@@ -311,18 +314,27 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             writer.add_scalar("ppo/policy_loss", pg_loss.item(), global_step)
             writer.add_scalar("ppo/entropy", entropy_loss.item(), global_step)
             writer.add_scalar("ppo/old_approx_kl", old_approx_kl.item(), global_step)
-            writer.add_scalar("ppo/approx_kl", approx_kl.item(), global_step)
+            writer.add_scalar("ppo/approx_kl", avg_kl, global_step)
             writer.add_scalar("ppo/epochs", epoch+1, global_step)
             writer.add_scalar("ppo/clipfrac", np.mean(clipfracs), global_step)
             writer.add_scalar("ppo/explained_variance", explained_var, global_step)
             # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
         # print('ppo:', np.mean(approx_kls))
+
         if args.target_kl is not None:
-            if np.mean(approx_kls) > args.target_kl:
+            if avg_kl > args.target_kl:
                 break
 
+    ppo_stats = {
+        't': global_step,
+        'approx_kl': avg_kl,
+        'clip_frac': np.mean(clipfracs),
+        'policy_loss': pg_loss.item(),
+        'entropy': entropy_loss.item(),
+    }
 
+    return ppo_stats
 
 
 def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, buffer_size, writer):
@@ -417,13 +429,24 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             if loss:
                 writer.add_scalar("ros/policy_loss", pg_loss.item(), global_step)
                 writer.add_scalar("ros/entropy", entropy_loss.item(), global_step)
-                writer.add_scalar("ros/push_up_loss", pushup_loss.item(), global_step)
+                writer.add_scalar("ros/pushup_loss", pushup_loss.item(), global_step)
         # print(approx_kl)
         # print('ros:', np.mean(approx_kls))
         if args.ros_target_kl:
             if avg_kl > args.ros_target_kl:
                 print('Early stop:', avg_kl, args.ros_target_kl)
                 break
+
+    ros_stats = {
+        't': global_step,
+        'approx_kl': avg_kl,
+        'clip_frac': np.mean(clipfracs),
+        'policy_loss': pg_loss.item(),
+        'entropy': entropy_loss.item(),
+        'pushup_loss': pushup_loss.item(),
+    }
+
+    return ros_stats
 
 
 def normalize_obs(obs_rms, obs):
@@ -518,6 +541,24 @@ def main():
     kl_ros_target = []
     entropy_target = []
     entropy_ros = []
+
+    ppo_logs = {
+        't': [],
+        'approx_kl': [],
+        'clip_frac': [],
+        'policy_loss': [],
+        'entropy': [],
+    }
+    ros_logs = {
+        't': [],
+        'approx_kl': [],
+        'clip_frac': [],
+        'policy_loss': [],
+        'entropy': [],
+        'pushup_loss': [],
+    }
+    ppo_logs = defaultdict(lambda: [])
+    ros_logs = defaultdict(lambda: [])
 
     # agent_mle = copy.deepcopy(agent)
     # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
@@ -631,7 +672,9 @@ def main():
             returns = advantages + values
 
         if update % args.update_freq == 0:
-            update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+            ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+            for key, val in ppo_stats.items():
+                ppo_logs[key].append(ppo_stats[key])
         if args.ros and (update % args.ros_update_freq == 0):
             # Set ROS policy equal to current target policy
             if update % args.ros_reset_freq:
@@ -639,8 +682,9 @@ def main():
                     source_param.data.copy_(dump_param.data)
 
             # ROS behavior update
-            update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, buffer_size, writer)
-
+            ros_stats = update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, buffer_size, writer)
+            for key, val in ros_stats.items():
+                ros_logs[key].append(ros_stats[key])
         # if update % 2 == 0:
         #     update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
         if update % args.eval_freq == 0:
@@ -648,6 +692,10 @@ def main():
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
             target_ret, target_std = eval_module.evaluate(global_step, train_env=envs)
             ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs)
+
+            np.savez(f'{args.save_dir}/ppo_stats.npz', **ppo_logs)
+            np.savez(f'{args.save_dir}/ros_stats.npz', **ros_logs)
+
 
             if args.track:
                 writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
