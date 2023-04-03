@@ -46,7 +46,7 @@ def parse_args():
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
-    parser.add_argument("--num-minibatches", type=int, default=8, help="the number of mini-batches")
+    parser.add_argument("--num-minibatches", type=int, default=32, help="the number of mini-batches")
     parser.add_argument("--update-epochs", type=int, default=10, help="the K epochs to update the policy")
     parser.add_argument("--update-freq", type=int, default=1)
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
@@ -69,7 +69,7 @@ def parse_args():
     parser.add_argument("--ros-max-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros-num-actions", type=int, default=10, help="the target KL divergence threshold")
     parser.add_argument("--ros-lambda", type=float, default=0.01, help="the target KL divergence threshold")
-    parser.add_argument("--ros-uniform-sampling", type=bool, default=False, help="the target KL divergence threshold")
+    parser.add_argument("--ros-uniform-sampling", type=bool, default=True, help="the target KL divergence threshold")
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
@@ -167,9 +167,16 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, action_mean, action_std, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x),
 
-    def get_action(self, x):
+    def get_action(self, x, noise=False):
         action_mean = self.actor_mean(x)
-        return action_mean
+        if noise:
+            action_logstd = self.actor_logstd.expand_as(action_mean)
+            action_std = torch.exp(action_logstd)
+            probs = Normal(action_mean, action_std)
+            action = probs.sample()
+        else:
+            action = action_mean
+        return action
 
     def get_action_and_info(self, x, action=None):
         action_mean = self.actor_mean(x)
@@ -429,6 +436,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             if loss:
                 writer.add_scalar("ros/policy_loss", pg_loss.item(), global_step)
                 writer.add_scalar("ros/entropy", entropy_loss.item(), global_step)
+            if pushup_loss:
                 writer.add_scalar("ros/pushup_loss", pushup_loss.item(), global_step)
         # print(approx_kl)
         # print('ros:', np.mean(approx_kls))
@@ -443,8 +451,9 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
         'clip_frac': np.mean(clipfracs),
         'policy_loss': pg_loss.item(),
         'entropy': entropy_loss.item(),
-        'pushup_loss': pushup_loss.item(),
     }
+    if pushup_loss:
+        ros_stats['pushup_loss'] = pushup_loss.item()
 
     return ros_stats
 
@@ -690,8 +699,12 @@ def main():
         if update % args.eval_freq == 0:
             current_time = time.time() - start_time
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
-            target_ret, target_std = eval_module.evaluate(global_step, train_env=envs)
-            ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs)
+            target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
+            ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
+            #
+            # print('With noise:')
+            # target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=True)
+            # ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=True)
 
             np.savez(f'{args.save_dir}/ppo_stats.npz', **ppo_logs)
             np.savez(f'{args.save_dir}/ros_stats.npz', **ros_logs)

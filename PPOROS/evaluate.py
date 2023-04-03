@@ -71,7 +71,7 @@ class Evaluate:
         # For computing success rate
         self._is_success_buffer = []
 
-    def evaluate(self, t, train_env):
+    def evaluate(self, t, train_env, noise):
         # if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
 
         env_reward_normalize = train_env.envs[0].env
@@ -79,7 +79,7 @@ class Evaluate:
 
         self.eval_env = copy.deepcopy(train_env)
         self.eval_env.envs[0].set_update(False)
-        returns, successes = self._evaluate()
+        returns, successes = self._evaluate(noise=noise)
         self.eval_env.envs[0].set_update(True)
 
         if self.log_path is not None:
@@ -115,7 +115,7 @@ class Evaluate:
                 self.best_mean_reward = mean_reward
 
         return mean_reward, std_reward
-    def _evaluate(self):
+    def _evaluate(self, noise):
         eval_returns = []
         eval_successes = []
         
@@ -129,7 +129,7 @@ class Evaluate:
                 step += 1
                 # ALGO LOGIC: put action logic here
                 with torch.no_grad():
-                    actions = self.model.get_action(torch.Tensor(obs).to(self.device))
+                    actions = self.model.get_action(torch.Tensor(obs).to(self.device), noise=noise)
                     # actions = self.model(torch.Tensor(obs).to(self.device))
                     actions = actions.cpu().numpy().clip(self.eval_env.single_action_space.low, self.eval_env.single_action_space.high)
     
