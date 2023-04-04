@@ -54,7 +54,7 @@ def parse_args():
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--compute-sampling-error", type=int, default=0, help="True = use ROS policy to collect data, False = use target policy")
 
-    parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
+    parser.add_argument("--eval-freq", type=int, default=int(20e3), help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="results will be saved to <results_dir>/<env_id>/<subdir>/")
@@ -70,7 +70,7 @@ def parse_args():
         args.seed = np.random.randint(2 ** 32 - 1)
 
     save_dir = f"{args.results_dir}/{args.env_id}/ppo/{args.results_subdir}"
-    if args.run_id:
+    if args.run_id is None:
         save_dir += f"/run_{args.run_id}"
     else:
         run_id = get_latest_run_id(save_dir=save_dir) + 1
@@ -369,6 +369,10 @@ if __name__ == "__main__":
         with open(f'{args.normalization_dir}/env_reward_normalize', 'rb') as f:
             return_rms = pickle.load(f)
             env_reward_normalize.return_rms = return_rms
+
+    target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
+    if args.track:
+        writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
