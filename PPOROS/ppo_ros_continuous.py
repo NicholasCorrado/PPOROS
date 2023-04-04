@@ -760,7 +760,7 @@ def main():
 
             if args.compute_sampling_error:
                 agent_mle = copy.deepcopy(agent)
-                optimizer_mle = optim.Adam(agent_mle.parameters(), lr=3e-4)
+                optimizer_mle = optim.Adam(agent_mle.parameters(), lr=3e-5)
 
                 b_obs = obs.reshape(-1, obs_dim)
                 b_actions = actions.reshape(-1, action_dim)
@@ -769,7 +769,7 @@ def main():
                 b_inds = np.arange(n)
 
                 mb_size = 256
-                for epoch in range(1000):
+                for epoch in range(2000):
                     np.random.shuffle(b_inds)
                     for start in range(0, n, mb_size):
                         end = start + mb_size
