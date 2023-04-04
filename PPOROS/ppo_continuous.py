@@ -39,11 +39,11 @@ def parse_args():
     parser.add_argument("--beta", type=int, default=False, help="Sample actions from Beta distribution rather than Gaussian")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=2048, help="the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--num-steps", type=int, default=8192, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
-    parser.add_argument("--num-minibatches", type=int, default=8, help="the number of mini-batches")
+    parser.add_argument("--num-minibatches", type=int, default=32, help="the number of mini-batches")
     parser.add_argument("--update-epochs", type=int, default=10, help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization")
     parser.add_argument("--clip-coef", type=float, default=0.2, help="the surrogate clipping coefficient")
@@ -52,7 +52,7 @@ def parse_args():
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
-    parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--compute-sampling-error", type=int, default=0, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
@@ -145,7 +145,7 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
 
-    def get_action(self, x):
+    def get_action(self, x, noise=False):
         action_mean = self.actor_mean(x)
         return action_mean
 
@@ -428,27 +428,37 @@ if __name__ == "__main__":
         if update % args.eval_freq == 0:
             current_time = time.time() - start_time
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
-            target_ret, target_std = eval_module.evaluate(global_step, train_env=envs)
+            target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
             if args.track:
                 writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
 
             if args.compute_sampling_error:
                 agent_mle = Agent(envs).to(device)
-                optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
+                optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-4)
 
                 b_obs = obs.reshape(-1, obs_dim)
                 b_actions = actions.reshape(-1, action_dim)
 
-                for i in range(10000):
-                    _, logprobs_mle, _, _ = agent_mle.get_action_and_value(b_obs, b_actions)
-                    loss = -torch.mean(logprobs_mle)
+                n = len(b_obs)
+                b_inds = np.arange(n)
 
-                    # if i % 100 == 0:
-                    #     print(i, loss.item())
+                mb_size = 256
+                for epoch in range(args.update_epochs):
+                    approx_kls = []
 
-                    optimizer_mle.zero_grad()
-                    loss.backward()
-                    optimizer_mle.step()
+                for epoch in range(1000):
+                    np.random.shuffle(b_inds)
+                    for start in range(0, n, mb_size):
+                        end = start + mb_size
+                        mb_inds = b_inds[start:end]
+
+                        _, logprobs_mle, _, _ = agent_mle.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                        loss = -torch.mean(logprobs_mle)
+                        print(epoch, loss.item())
+
+                        optimizer_mle.zero_grad()
+                        loss.backward()
+                        optimizer_mle.step()
 
                 with torch.no_grad():
 
