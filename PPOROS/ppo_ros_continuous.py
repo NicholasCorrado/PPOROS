@@ -61,7 +61,7 @@ def parse_args():
     parser.add_argument("--ros-clip-coef", type=float, default=0.3, help="the surrogate clipping coefficient")
     parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
     parser.add_argument("--ros-reset-freq", type=int, default=1, help="Reset ROS policy to target policy every ros_reset_freq updates")
-    parser.add_argument("--ros-update-epochs", type=int, default=10, help="the K epochs to update the policy")
+    parser.add_argument("--ros-update-epochs", type=int, default=16, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
     parser.add_argument("--ros-update-freq", type=int, default=1)
     parser.add_argument("--ros-ent-coef", type=float, default=0.0, help="coefficient of the entropy in ros update")
@@ -724,7 +724,7 @@ def main():
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-        if update % args.update_freq == 0:
+        if update % args.update_freq == 0 and args.update_epochs > 0:
             ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
             for key, val in ppo_stats.items():
                 ppo_logs[key].append(ppo_stats[key])
@@ -760,29 +760,39 @@ def main():
 
             if args.compute_sampling_error:
                 agent_mle = copy.deepcopy(agent)
-                optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
+                optimizer_mle = optim.Adam(agent_mle.parameters(), lr=3e-4)
 
                 b_obs = obs.reshape(-1, obs_dim)
                 b_actions = actions.reshape(-1, action_dim)
 
-                for i in range(10000):
-                    _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions)
-                    loss = -torch.mean(logprobs_mle)
+                n = len(b_obs)
+                b_inds = np.arange(n)
 
-                    # if i % 100 == 0:
-                    #     print(i, loss)
+                mb_size = 256
+                for epoch in range(1000):
+                    np.random.shuffle(b_inds)
+                    for start in range(0, n, mb_size):
+                        end = start + mb_size
+                        mb_inds = b_inds[start:end]
 
-                    optimizer_mle.zero_grad()
-                    loss.backward()
-                    optimizer_mle.step()
+                        _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs[mb_inds], b_actions[mb_inds])
+                        loss = -torch.mean(logprobs_mle)
+
+                        optimizer_mle.zero_grad()
+                        loss.backward()
+                        optimizer_mle.step()
+                    if epoch % 200 == 0:
+                        print(epoch, loss.item())
+
+                _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions)
 
                 with torch.no_grad():
-                    _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions)
+                    _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions)
                     logratio = logprobs_mle - logprobs_target
                     ratio = logratio.exp()
                     approx_kl_mle_target = ((ratio - 1) - logratio).mean()
                     print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
-                    _, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions)
+                    _, _, _, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions)
 
                     logratio = logprobs_ros - logprobs_target
                     ratio = logratio.exp()
