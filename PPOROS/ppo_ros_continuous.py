@@ -69,7 +69,7 @@ def parse_args():
     parser.add_argument("--ros-max-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros-num-actions", type=int, default=10, help="the target KL divergence threshold")
     parser.add_argument("--ros-lambda", type=float, default=0.01, help="the target KL divergence threshold")
-    parser.add_argument("--ros-uniform-sampling", type=bool, default=True, help="the target KL divergence threshold")
+    parser.add_argument("--ros-uniform-sampling", type=bool, default=False, help="the target KL divergence threshold")
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
