@@ -455,12 +455,13 @@ if __name__ == "__main__":
 
                         _, logprobs_mle, _, _ = agent_mle.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
                         loss = -torch.mean(logprobs_mle)
-                        print(epoch, loss.item())
 
                         optimizer_mle.zero_grad()
                         loss.backward()
                         optimizer_mle.step()
 
+                  # if epoch % 200 == 0:
+                    #     print(epoch, loss.item())
                 with torch.no_grad():
 
                     _, logprobs_target, ent_target, _ = agent.get_action_and_value(b_obs, b_actions)

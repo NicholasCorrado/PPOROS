@@ -784,8 +784,8 @@ def main():
                         optimizer_mle.zero_grad()
                         loss.backward()
                         optimizer_mle.step()
-                    if epoch % 200 == 0:
-                        print(epoch, loss.item())
+                    # if epoch % 200 == 0:
+                    #     print(epoch, loss.item())
 
                 _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions)
 
