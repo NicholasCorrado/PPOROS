@@ -94,7 +94,7 @@ def parse_args():
     else:
         save_dir = f"{args.results_dir}/{args.env_id}/ppo_buffer/{args.results_subdir}"
 
-    if args.run_id is None:
+    if args.run_id is not None:
         save_dir += f"/run_{args.run_id}"
     else:
         run_id = get_latest_run_id(save_dir=save_dir) + 1
