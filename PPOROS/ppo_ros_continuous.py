@@ -367,7 +367,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
 
     # Optimizing the policy and value network
     batch_size = b_obs.shape[0]
-    minibatch_size = min(args.ros_minibatch_size, batch_size)
+    minibatch_size = args.ros_minibatch_size
 
     # Optimizing the policy and value network
     b_inds = np.arange(batch_size)
@@ -734,7 +734,7 @@ def main():
                 ppo_logs[key].append(ppo_stats[key])
         if args.ros and global_step % args.ros_num_steps == 0 :# and global_step > 25000:
             # Set ROS policy equal to current target policy
-            if update % args.ros_reset_freq == 0:
+            if global_step % args.num_steps == 0:
                 for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
                     source_param.data.copy_(dump_param.data)
 
