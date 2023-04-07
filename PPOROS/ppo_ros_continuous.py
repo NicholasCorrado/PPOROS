@@ -57,6 +57,7 @@ def parse_args():
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--ros-num-steps", type=int, default=128, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--ros-learning-rate", "-ros-lr", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--ros-clip-coef", type=float, default=0.3, help="the surrogate clipping coefficient")
     parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
@@ -67,7 +68,7 @@ def parse_args():
     parser.add_argument("--ros-ent-coef", type=float, default=0.0, help="coefficient of the entropy in ros update")
     parser.add_argument("--ros-target-kl", type=float, default=0.05, help="the target KL divergence threshold")
     parser.add_argument("--ros-max-kl", type=float, default=None, help="the target KL divergence threshold")
-    parser.add_argument("--ros-num-actions", type=int, default=5, help="the target KL divergence threshold")
+    parser.add_argument("--ros-num-actions", type=int, default=10, help="the target KL divergence threshold")
     parser.add_argument("--ros-lambda", type=float, default=0.01, help="the target KL divergence threshold")
     parser.add_argument("--ros-uniform-sampling", type=bool, default=False, help="the target KL divergence threshold")
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
@@ -350,7 +351,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     if global_step < buffer_size:
         end = global_step
     else:
-        end = -args.num_steps
+        end = -args.ros_num_steps
 
     # flatten the batch
     b_obs = obs[:end].reshape((-1,) + envs.single_observation_space.shape)
@@ -366,7 +367,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
 
     # Optimizing the policy and value network
     batch_size = b_obs.shape[0]
-    minibatch_size = int(batch_size // args.ros_num_minibatches)
+    minibatch_size = min(args.ros_minibatch_size, batch_size)
 
     # Optimizing the policy and value network
     b_inds = np.arange(batch_size)
@@ -584,6 +585,7 @@ def main():
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
+    num_ros_updates = args.total_timesteps // args.batch_size * (args.num_steps//args.ros_num_steps)
 
     obs_dim = envs.single_observation_space.shape[0]
     action_dim = envs.single_action_space.shape[0]
@@ -630,7 +632,7 @@ def main():
     target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
     ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
 
-    for update in range(1, num_updates + 1):
+    for update in range(1, num_ros_updates + 1):
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (update - 1.0) / num_updates
@@ -641,8 +643,7 @@ def main():
             # ros_lrnow = frac * args.ros_learning_rate
             # ros_optimizer.param_groups[0]["lr"] = ros_lrnow
 
-        loss = 0
-        for step in range(0, args.num_steps):
+        for step in range(0, args.ros_num_steps):
             global_step += 1 * args.num_envs
             obs_buffer[buffer_pos] = env_obs_normalize.unnormalize(next_obs) # store unnormalized obs
             dones_buffer[buffer_pos] = next_done
@@ -727,11 +728,11 @@ def main():
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-        if update % args.update_freq == 0 and args.update_epochs > 0:
+        if global_step % args.num_steps == 0 and args.update_epochs > 0:
             ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
             for key, val in ppo_stats.items():
                 ppo_logs[key].append(ppo_stats[key])
-        if args.ros and (update % args.ros_update_freq == 0):# and global_step > 25000:
+        if args.ros and global_step % args.ros_num_steps == 0 :# and global_step > 25000:
             # Set ROS policy equal to current target policy
             if update % args.ros_reset_freq == 0:
                 for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
@@ -743,7 +744,7 @@ def main():
                 ros_logs[key].append(ros_stats[key])
         # if update % 2 == 0:
         #     update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
-        if update % args.eval_freq == 0:
+        if global_step % (args.num_steps*args.eval_freq) == 0:
             current_time = time.time() - start_time
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
             target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
