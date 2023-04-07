@@ -403,7 +403,6 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                 # calculate approx_kl http://joschu.net/blog/kl-approx.html
                 # old_approx_kl = (-logratio).mean()
                 approx_kl = ((ros_ratio - 1) - ros_logratio).mean()
-                approx_kls.append(approx_kl.item())
                 clipfracs += [((ros_ratio - 1.0).abs() > args.ros_clip_coef).float().mean().item()]
                 # print(approx_kl)
 
@@ -413,6 +412,8 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                         # print('Early stop:', avg_kl, args.ros_target_kl)
                         # print(approx_kls)
                         break
+
+                approx_kls.append(approx_kl.item())
                 # if approx_kl > args.ros_target_kl:
                 #     print(global_step, epoch, approx_kl.item())
 
