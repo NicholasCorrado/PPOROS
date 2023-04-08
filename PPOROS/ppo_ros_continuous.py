@@ -260,6 +260,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     b_inds = np.arange(batch_size)
     clipfracs = []
     skipped_updates = 0
+    done_updating = False
     for epoch in range(args.update_epochs):
         approx_kls = []
         np.random.shuffle(b_inds)
@@ -277,6 +278,11 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
                 approx_kl = ((ratio - 1) - logratio).mean()
                 clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
                 approx_kls.append(approx_kl)
+
+                if args.target_kl is not None:
+                    if approx_kl > args.target_kl:
+                        done_updating = True
+                        break
 
             mb_advantages = b_advantages[mb_inds]
             if args.norm_adv:
@@ -310,34 +316,29 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
             optimizer.step()
 
-        avg_kl = np.mean(approx_kls)
+        if done_updating:
+            break
 
-        if args.track:
-            y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-            var_y = np.var(y_true)
-            explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+    if args.track:
+        y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
+        var_y = np.var(y_true)
+        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-            # TRY NOT TO MODIFY: record rewards for plotting purposes
-            writer.add_scalar("ppo/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-            writer.add_scalar("ppo/value_loss", v_loss.item(), global_step)
-            writer.add_scalar("ppo/policy_loss", pg_loss.item(), global_step)
-            writer.add_scalar("ppo/entropy", entropy_loss.item(), global_step)
-            writer.add_scalar("ppo/old_approx_kl", old_approx_kl.item(), global_step)
-            writer.add_scalar("ppo/approx_kl", avg_kl, global_step)
-            writer.add_scalar("ppo/epochs", epoch+1, global_step)
-            writer.add_scalar("ppo/clipfrac", np.mean(clipfracs), global_step)
-            writer.add_scalar("ppo/explained_variance", explained_var, global_step)
-            # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-
-        # print('ppo:', np.mean(approx_kls))
-
-        if args.target_kl is not None:
-            if avg_kl > args.target_kl:
-                break
+        # TRY NOT TO MODIFY: record rewards for plotting purposes
+        writer.add_scalar("ppo/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+        writer.add_scalar("ppo/value_loss", v_loss.item(), global_step)
+        writer.add_scalar("ppo/policy_loss", pg_loss.item(), global_step)
+        writer.add_scalar("ppo/entropy", entropy_loss.item(), global_step)
+        writer.add_scalar("ppo/old_approx_kl", old_approx_kl.item(), global_step)
+        writer.add_scalar("ppo/approx_kl", approx_kl, global_step)
+        writer.add_scalar("ppo/epochs", epoch+1, global_step)
+        writer.add_scalar("ppo/clipfrac", np.mean(clipfracs), global_step)
+        writer.add_scalar("ppo/explained_variance", explained_var, global_step)
+        # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
     ppo_stats = {
         't': global_step,
-        'approx_kl': avg_kl,
+        'approx_kl': approx_kl,
         'clip_frac': np.mean(clipfracs),
         'policy_loss': pg_loss.item(),
         'entropy': entropy_loss.item(),
@@ -389,8 +390,6 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                     if approx_kl > args.ros_target_kl:
                         done_updating = True
                         break
-            if done_updating:
-                break
 
             if args.ros_num_actions:
                 for i in range(args.ros_num_actions):
@@ -417,21 +416,23 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             nn.utils.clip_grad_norm_(agent_ros.parameters(), args.max_grad_norm)
             ros_optimizer.step()
 
-        # avg_kl = np.mean(approx_kls)
-        if args.track:
-            writer.add_scalar("ros/learning_rate", ros_optimizer.param_groups[0]["lr"], global_step)
-            # writer.add_scalar("ros/old_approx_kl", old_approx_kl.item(), global_step)
-            writer.add_scalar("ros/approx_kl", approx_kl, global_step)
-            # writer.add_scalar("ros/approx_kl", avg_kl, global_step)
-            writer.add_scalar("ros/epochs", epoch+1, global_step)
-            writer.add_scalar("ros/skipped_updates", skipped_updates, global_step)
-            writer.add_scalar("ros/clipfrac", np.mean(clipfracs), global_step)
+        if done_updating:
+            break
+    # avg_kl = np.mean(approx_kls)
+    if args.track:
+        writer.add_scalar("ros/learning_rate", ros_optimizer.param_groups[0]["lr"], global_step)
+        # writer.add_scalar("ros/old_approx_kl", old_approx_kl.item(), global_step)
+        writer.add_scalar("ros/approx_kl", approx_kl, global_step)
+        # writer.add_scalar("ros/approx_kl", avg_kl, global_step)
+        writer.add_scalar("ros/epochs", epoch+1, global_step)
+        writer.add_scalar("ros/skipped_updates", skipped_updates, global_step)
+        writer.add_scalar("ros/clipfrac", np.mean(clipfracs), global_step)
 
-            if loss:
-                writer.add_scalar("ros/policy_loss", pg_loss.item(), global_step)
-                # writer.add_scalar("ros/entropy", entropy_loss.item(), global_step)
-            if pushup_loss:
-                writer.add_scalar("ros/pushup_loss", pushup_loss.item(), global_step)
+        if loss:
+            writer.add_scalar("ros/policy_loss", pg_loss.item(), global_step)
+            # writer.add_scalar("ros/entropy", entropy_loss.item(), global_step)
+        if pushup_loss:
+            writer.add_scalar("ros/pushup_loss", pushup_loss.item(), global_step)
 
     ros_stats = {}
     if loss:
