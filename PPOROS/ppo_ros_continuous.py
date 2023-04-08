@@ -66,7 +66,7 @@ def parse_args():
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
     parser.add_argument("--ros-update-freq", type=int, default=1)
     parser.add_argument("--ros-ent-coef", type=float, default=0.0, help="coefficient of the entropy in ros update")
-    parser.add_argument("--ros-target-kl", type=float, default=0.03, help="the target KL divergence threshold")
+    parser.add_argument("--ros-target-kl", type=float, default=0.05, help="the target KL divergence threshold")
     parser.add_argument("--ros-max-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros-num-actions", type=int, default=10, help="the target KL divergence threshold")
     parser.add_argument("--ros-lambda", type=float, default=0.01, help="the target KL divergence threshold")
@@ -359,36 +359,14 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     b_logprobs = logprobs[:end].reshape(-1)
     b_actions = actions[:end].reshape((-1,) + envs.single_action_space.shape)
 
-    # threshold_prob = 1e-5
-    # b_probs = b_logprobs.exp()
-    # mask = b_probs > threshold_prob
-    # b_obs = b_obs[mask]
-    # b_logprobs = b_logprobs[mask]
-    # b_actions = b_actions[mask]
-
-    # Optimizing the policy and value network
     batch_size = b_obs.shape[0]
     minibatch_size = args.ros_minibatch_size
-
-    # Optimizing the policy and value network
     b_inds = np.arange(batch_size)
     clipfracs = []
     skipped_updates = 0
 
-    # b_probs = b_probs[mask]
-    # probs_min = b_probs.min()
-    # probs_max = b_probs.max()
-    # probs_count = mask.sum()
-    # probs_mean = b_probs.mean()
-    #
-    # if args.track:
-    #     writer.add_scalar("ppo/probs_min", probs_min, global_step)
-    #     writer.add_scalar("ppo/probs_max", probs_max, global_step)
-    #     writer.add_scalar("ppo/probs_count", probs_count, global_step)
-    #     writer.add_scalar("ppo/probs_mean", probs_mean, global_step)
-
     for epoch in range(args.ros_update_epochs):
-        approx_kls = []
+        # approx_kls = []
         np.random.shuffle(b_inds)
         for start in range(0, batch_size, minibatch_size):
             end = start + minibatch_size
@@ -405,24 +383,10 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                 # old_approx_kl = (-logratio).mean()
                 approx_kl = ((ros_ratio - 1) - ros_logratio).mean()
                 clipfracs += [((ros_ratio - 1.0).abs() > args.ros_clip_coef).float().mean().item()]
-                # print(approx_kl)
 
-                avg_kl = np.mean(approx_kls)
                 if args.ros_target_kl:
-                    if avg_kl > args.ros_target_kl:
-                        # print('Early stop:', avg_kl, args.ros_target_kl)
-                        # print(approx_kls)
+                    if approx_kl > args.ros_target_kl:
                         break
-
-                approx_kls.append(approx_kl.item())
-                # if approx_kl > args.ros_target_kl:
-                #     print(global_step, epoch, approx_kl.item())
-
-            # loss = None
-            # if args.ros_max_kl is not None:
-            #     if approx_kl > args.ros_max_kl:
-            #         skipped_updates += 1
-            #         continue
 
             if args.ros_num_actions:
                 for i in range(args.ros_num_actions):
@@ -432,32 +396,16 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                         with torch.no_grad():
                             random_actions = agent.sample_actions(b_obs[mb_inds])
                     _, _, _, pushup_logprob, entropy = agent_ros.get_action_and_info(b_obs[mb_inds], random_actions)
-                    # push_up_loss = torch.clamp(newlogprob, 1 - args.ros_clip_coef, 1 + args.ros_clip_coef)
-                    # push_up_loss += push_up_loss.mean()
-                    # pushup_logratio = pushup_logprob - ros_logprob
-                    # pushup_ratio = pushup_logratio.exp()
-                    # push_up_loss += pushup_ratio.mean()
-
-                    # pushup_prob = pushup_logprob.exp()
-                    # pushup_loss1 = pushup_prob
-                    # pushup_loss2 = torch.clamp(pushup_ratio, 1 - args.ros_clip_coef, 0.03)
-                    # pushup_loss += torch.max(pushup_loss1, pushup_loss2).mean()
-                    # pushup_loss += torch.clamp(pushup_prob, 1e-3, 0.03).mean()
-                    # pushup_loss += pushup_prob.mean()
-
                     pushup_loss += pushup_logprob.mean()
-
                 pushup_loss = pushup_loss/args.ros_num_actions
 
             # Policy loss
             pg_loss1 = ros_ratio
             pg_loss2 = torch.clamp(ros_ratio, 1 - args.ros_clip_coef, 1 + args.ros_clip_coef)
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-            # pg_loss = pg_loss2.mean()
-            # pg_loss = torch.clamp(pg_loss, 0.9, 1.1)
 
-            entropy_loss = entropy.mean()
-            loss = pg_loss - args.ros_lambda*pushup_loss - args.ros_ent_coef * entropy_loss
+            # entropy_loss = entropy.mean()
+            loss = pg_loss - args.ros_lambda*pushup_loss #- args.ros_ent_coef * entropy_loss
 
             ros_optimizer.zero_grad()
             loss.backward()
@@ -465,38 +413,30 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             nn.utils.clip_grad_norm_(agent_ros.parameters(), args.max_grad_norm)
             ros_optimizer.step()
 
-        avg_kl = np.mean(approx_kls)
+        # avg_kl = np.mean(approx_kls)
         if args.track:
             writer.add_scalar("ros/learning_rate", ros_optimizer.param_groups[0]["lr"], global_step)
             # writer.add_scalar("ros/old_approx_kl", old_approx_kl.item(), global_step)
-            writer.add_scalar("ros/approx_kl", avg_kl, global_step)
+            writer.add_scalar("ros/approx_kl", approx_kl, global_step)
+            # writer.add_scalar("ros/approx_kl", avg_kl, global_step)
             writer.add_scalar("ros/epochs", epoch+1, global_step)
             writer.add_scalar("ros/skipped_updates", skipped_updates, global_step)
             writer.add_scalar("ros/clipfrac", np.mean(clipfracs), global_step)
 
             if loss:
                 writer.add_scalar("ros/policy_loss", pg_loss.item(), global_step)
-                writer.add_scalar("ros/entropy", entropy_loss.item(), global_step)
+                # writer.add_scalar("ros/entropy", entropy_loss.item(), global_step)
             if pushup_loss:
                 writer.add_scalar("ros/pushup_loss", pushup_loss.item(), global_step)
-        # print(approx_kl)
-        # print('ros:', np.mean(approx_kls))
-        # print(approx_kls)
-        if args.ros_target_kl:
-            if avg_kl > args.ros_target_kl:
-                # print('Early stop')
-                # print('Early stop:', avg_kl, args.ros_target_kl)
-                # print(approx_kls)
-                break
 
     ros_stats = {}
     if loss:
         ros_stats = {
             't': global_step,
-            'approx_kl': avg_kl,
+            'approx_kl': approx_kl,
             'clip_frac': np.mean(clipfracs),
             'policy_loss': pg_loss.item(),
-            'entropy': entropy_loss.item(),
+            # 'entropy': entropy_loss.item(),
         }
     if pushup_loss:
         ros_stats['pushup_loss'] = pushup_loss.item()
