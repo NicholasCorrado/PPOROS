@@ -521,11 +521,11 @@ def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_
 
 def main():
     args = parse_args()
+    run_name = (args.save_dir).replace('/', '_')
     if args.track:
         import wandb
         from torch.utils.tensorboard import SummaryWriter
 
-        run_name = (args.save_dir).replace('/', '_')
         wandb.login(key="7313077863c8908c24cc6058b99c2b2cc35d326b")
         wandb.init(
             project=args.wandb_project_name,
