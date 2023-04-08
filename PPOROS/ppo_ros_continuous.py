@@ -42,7 +42,7 @@ def parse_args():
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=2048, help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--buffer-history", "-b", type=int, default=2, help="Number of prior collect phases to store in buffer")
+    parser.add_argument("--buffer-batches", "-b", type=int, default=2, help="Number of collect phases to store in buffer")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -85,7 +85,8 @@ def parse_args():
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.ros_minibatch_size = int(args.batch_size // args.ros_num_minibatches)
 
-    # fmt: on
+    # cuda support. Currently does not work with normalization
+    args.device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     if args.seed is None:
         args.seed = np.random.randint(2 ** 32 - 1)
@@ -511,13 +512,76 @@ def normalize_reward(return_rms, rewards):
     """Normalizes the rewards with the running mean rewards and their variance."""
     return rewards / np.sqrt(return_rms.var + 1e-8)
 
+def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step):
+    agent_mle = copy.deepcopy(agent)
+    optimizer_mle = optim.Adam(agent_mle.parameters(), lr=3e-5)
+
+    obs_dim = obs.shape[-1]
+    action_dim = actions.shape[-1]
+
+    b_obs = obs.reshape(-1, obs_dim)
+    b_actions = actions.reshape(-1, action_dim)
+
+    n = len(b_obs)
+    b_inds = np.arange(n)
+
+    mb_size = 256
+    for epoch in range(2000):
+        np.random.shuffle(b_inds)
+        for start in range(0, n, mb_size):
+            end = start + mb_size
+            mb_inds = b_inds[start:end]
+
+            _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs[mb_inds], b_actions[mb_inds])
+            loss = -torch.mean(logprobs_mle)
+
+            optimizer_mle.zero_grad()
+            loss.backward()
+            optimizer_mle.step()
+        # if epoch % 200 == 0:
+        #     print(epoch, loss.item())
+
+    _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions)
+
+    with torch.no_grad():
+        _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions)
+        logratio = logprobs_mle - logprobs_target
+        ratio = logratio.exp()
+        approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+        print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
+        _, _, _, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions)
+
+        logratio = logprobs_ros - logprobs_target
+        ratio = logratio.exp()
+        approx_kl_ros_target = ((ratio - 1) - logratio).mean()
+        print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
+
+        timesteps = []
+        sampling_error = []
+        kl_ros_target = []
+        entropy_target = []
+        entropy_ros = []
+
+        sampling_error_logs['kl_mle_target'].append(approx_kl_mle_target.item())
+        sampling_error_logs['kl_ros_target'].append(approx_kl_ros_target.item())
+        sampling_error_logs['ent_target'].append(ent_target.mean().item())
+        sampling_error_logs['ent_ros'].append(ent_ros.mean().item())
+        sampling_error_logs['t'].append(global_step)
+
+        np.savez(f'{args.save_dir}/stats.npz',
+                 t=timesteps,
+                 sampling_error=sampling_error,
+                 kl_ros_target=kl_ros_target,
+                 entropy_target=entropy_target,
+                 entropy_ros=entropy_ros)
+
 def main():
     args = parse_args()
-    run_name = (args.save_dir).replace('/','_')
     if args.track:
         import wandb
         from torch.utils.tensorboard import SummaryWriter
 
+        run_name = (args.save_dir).replace('/', '_')
         wandb.login(key="7313077863c8908c24cc6058b99c2b2cc35d326b")
         wandb.init(
             project=args.wandb_project_name,
@@ -536,90 +600,73 @@ def main():
     else:
         writer = None
 
-    # TRY NOT TO MODIFY: seeding
+    # seeding
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
-
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
         [make_env(args.env_id, i, args.capture_video, run_name, args.gamma) for i in range(args.num_envs)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
+    env_reward_normalize = envs.envs[0].env
+    env_obs_normalize = envs.envs[0].env.env.env
+    # for convenience
+    obs_dim = envs.single_observation_space.shape[0]
+    action_dim = envs.single_action_space.shape[0]
 
     # PPO target agent
-    if args.beta:
-        agent = AgentBeta(envs).to(device)
-    else:
-        agent = Agent(envs).to(device)
+    agent = Agent(envs).to(args.device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
-
-    if args.policy_path:
-        agent = torch.load(args.policy_path)
-
     # ROS behavior agent
     agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
     ros_optimizer = optim.Adam(agent_ros.parameters(), lr=args.ros_learning_rate, eps=1e-5)
 
-    # Evaluation modules
-    eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device)
-    eval_module_ros = Evaluate(model=agent_ros, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device, suffix='ros')
-
-
-    history_k = args.buffer_history
-    buffer_size = history_k * args.num_steps
-    buffer_pos = 0
-    # ALGO Logic: Storage setup
-    # ALGO Logic: Storage setup
-    obs_buffer = torch.zeros((buffer_size, args.num_envs) + envs.single_observation_space.shape).to(device)
-    actions_buffer = torch.zeros((buffer_size, args.num_envs) + envs.single_action_space.shape).to(device)
-    rewards_buffer = torch.zeros((buffer_size, args.num_envs)).to(device)
-    dones_buffer = torch.zeros((buffer_size, args.num_envs)).to(device)
-
-    # TRY NOT TO MODIFY: start the game
-    global_step = 0
-    start_time = time.time()
-    next_obs, _ = envs.reset(seed=args.seed)
-    next_obs = torch.Tensor(next_obs).to(device)
-    next_done = torch.zeros(args.num_envs).to(device)
-    num_updates = args.total_timesteps // args.batch_size
-    # There are (ppo num updates)/(ros num updates) times as many ROS updates.
-    num_ros_updates = num_updates * (args.num_steps//args.ros_num_steps)
-
-    obs_dim = envs.single_observation_space.shape[0]
-    action_dim = envs.single_action_space.shape[0]
-
-    timesteps = []
-    sampling_error = []
-    kl_ros_target = []
-    entropy_target = []
-    entropy_ros = []
-
-    ppo_logs = defaultdict(lambda: [])
-    ros_logs = defaultdict(lambda: [])
-
-    # agent_mle = copy.deepcopy(agent)
-    # optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3, eps=1e-5)
-
-    env_reward_normalize = envs.envs[0].env
-    env_obs_normalize = envs.envs[0].env.env.env
-
-    target_update = 0
-
+    # load pretrained policy and normalization information
+    if args.policy_path:
+        agent = torch.load(args.policy_path)
     if args.normalization_dir:
         with open(f'{args.normalization_dir}/env_obs_normalize', 'rb') as f:
             obs_rms = pickle.load(f)
             env_obs_normalize.obs_rms = obs_rms
-
         with open(f'{args.normalization_dir}/env_reward_normalize', 'rb') as f:
             return_rms = pickle.load(f)
             env_reward_normalize.return_rms = return_rms
 
-    target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
-    ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
+    # Evaluation modules
+    eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=args.device)
+    eval_module_ros = Evaluate(model=agent_ros, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=args.device, suffix='ros')
+
+    # buffer setup
+    buffer_size = args.buffer_batches * args.num_steps
+    obs_buffer = torch.zeros((buffer_size, args.num_envs) + envs.single_observation_space.shape).to(args.device)
+    actions_buffer = torch.zeros((buffer_size, args.num_envs) + envs.single_action_space.shape).to(args.device)
+    rewards_buffer = torch.zeros((buffer_size, args.num_envs)).to(args.device)
+    dones_buffer = torch.zeros((buffer_size, args.num_envs)).to(args.device)
+    buffer_pos = 0 # index of buffer position to be updated in the current timestep
+
+    # initialize RL loop
+    next_obs, _ = envs.reset(seed=args.seed)
+    next_obs = torch.Tensor(next_obs).to(args.device)
+    next_done = torch.zeros(args.num_envs).to(args.device)
+    num_updates = args.total_timesteps // args.batch_size
+    # There are (ppo num updates)/(ros num updates) times as many ROS updates.
+    num_ros_updates = num_updates * (args.num_steps//args.ros_num_steps)
+
+    # logging
+    ppo_logs = defaultdict(lambda: [])
+    ros_logs = defaultdict(lambda: [])
+    sampling_error_logs = defaultdict(lambda: [])
+
+    global_step = 0
+    start_time = time.time()
+    target_update = 0
+
+    # evaluate initial policy
+    eval_module.evaluate(global_step, train_env=envs, noise=False)
+    eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
 
     for ros_update in range(1, num_ros_updates + 1):
         for step in range(0, args.ros_num_steps):
@@ -627,7 +674,6 @@ def main():
             obs_buffer[buffer_pos] = env_obs_normalize.unnormalize(next_obs) # store unnormalized obs
             dones_buffer[buffer_pos] = next_done
 
-            # ALGO LOGIC: action logic
             with torch.no_grad():
                 if args.ros and np.random.random() < args.ros_mixture_prob:
                     action, action_mean, action_std, logprob_ros, entropy, _ = agent_ros.get_action_and_value(next_obs)
@@ -638,13 +684,11 @@ def main():
                     action, action_mean, action_std, _, _, _ = agent.get_action_and_value(next_obs)
                 actions_buffer[buffer_pos] = action
 
-
-            # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminated, truncated, infos = envs.step(action.cpu().numpy())
             done = np.logical_or(terminated, truncated)
             reward = env_reward_normalize.unnormalize(reward)
-            rewards_buffer[buffer_pos] = torch.tensor(reward).to(device).view(-1)
-            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
+            rewards_buffer[buffer_pos] = torch.tensor(reward).to(args.device).view(-1)
+            next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(done).to(args.device)
 
             buffer_pos += 1
             buffer_pos %= buffer_size
@@ -680,20 +724,16 @@ def main():
         rewards = env_reward_normalize.normalize(rewards).float()
         env_obs_normalize.set_update(True)
 
-        # assert torch.isnan(obs).sum() == 0
-        # assert torch.isnan(rewards).sum() == 0
-
         with torch.no_grad():
             _, _, _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
             values = new_value
             logprobs = new_logprob.reshape(-1, 1)
 
-        # bootstrap value if not done
         # Compute returns and advantages -- bootstrap value if not done
         with torch.no_grad():
             # next_value = agent.get_value(normalize_obs(obs_rms, next_obs)).reshape(1, -1)
             next_value = agent.get_value(next_obs).reshape(1, -1)
-            advantages = torch.zeros_like(rewards).to(device)
+            advantages = torch.zeros_like(rewards).to(args.device)
             lastgaelam = 0
             num_steps = indices.shape[0]
             for t in reversed(range(num_steps)):
@@ -709,102 +749,46 @@ def main():
 
         if global_step % args.num_steps == 0 and args.update_epochs > 0:
             target_update += 1
-            # Annealing the rate if instructed to do so.
+
+            # Annealing learning rate
             if args.anneal_lr:
                 frac = 1.0 - (target_update - 1.0) / num_updates
                 lrnow = frac * args.learning_rate
                 optimizer.param_groups[0]["lr"] = lrnow
 
-                # args.ros_clip_coef = frac * args.ros_clip_coef
-                # ros_lrnow = frac * args.ros_learning_rate
-                # ros_optimizer.param_groups[0]["lr"] = ros_lrnow
-
+            # perform target update and log stats
             ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
             for key, val in ppo_stats.items():
                 ppo_logs[key].append(ppo_stats[key])
+
         if args.ros and global_step % args.ros_num_steps == 0 :# and global_step > 25000:
             # Set ROS policy equal to current target policy
-            # if global_step % args.num_steps == 0:
             for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
                 source_param.data.copy_(dump_param.data)
 
-            # ROS behavior update
+            # perform ROS behavior update and log stats
             ros_stats = update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, buffer_size, writer)
             for key, val in ros_stats.items():
                 ros_logs[key].append(ros_stats[key])
-        # if update % 2 == 0:
-        #     update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+
+        # Evaluate agent performance
         if global_step % (args.num_steps*args.eval_freq) == 0:
             current_time = time.time() - start_time
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
             target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
             ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
-            #
-            # print('With noise:')
-            # target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=True)
-            # ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=True)
 
+            # save stats
             np.savez(f'{args.save_dir}/ppo_stats.npz', **ppo_logs)
             np.savez(f'{args.save_dir}/ros_stats.npz', **ros_logs)
-
 
             if args.track:
                 writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
                 writer.add_scalar("charts/ros_eval_return", ros_ret, global_step)
 
             if args.compute_sampling_error:
-                agent_mle = copy.deepcopy(agent)
-                optimizer_mle = optim.Adam(agent_mle.parameters(), lr=3e-5)
+                compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
 
-                b_obs = obs.reshape(-1, obs_dim)
-                b_actions = actions.reshape(-1, action_dim)
-
-                n = len(b_obs)
-                b_inds = np.arange(n)
-
-                mb_size = 256
-                for epoch in range(2000):
-                    np.random.shuffle(b_inds)
-                    for start in range(0, n, mb_size):
-                        end = start + mb_size
-                        mb_inds = b_inds[start:end]
-
-                        _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs[mb_inds], b_actions[mb_inds])
-                        loss = -torch.mean(logprobs_mle)
-
-                        optimizer_mle.zero_grad()
-                        loss.backward()
-                        optimizer_mle.step()
-                    # if epoch % 200 == 0:
-                    #     print(epoch, loss.item())
-
-                _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions)
-
-                with torch.no_grad():
-                    _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions)
-                    logratio = logprobs_mle - logprobs_target
-                    ratio = logratio.exp()
-                    approx_kl_mle_target = ((ratio - 1) - logratio).mean()
-                    print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
-                    _, _, _, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions)
-
-                    logratio = logprobs_ros - logprobs_target
-                    ratio = logratio.exp()
-                    approx_kl_ros_target = ((ratio - 1) - logratio).mean()
-                    print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
-
-                    sampling_error.append(approx_kl_mle_target.item())
-                    kl_ros_target.append(approx_kl_ros_target.item())
-                    entropy_target.append(ent_target.mean().item())
-                    entropy_ros.append(ent_ros.mean().item())
-                    timesteps.append(global_step)
-
-                    np.savez(f'{args.save_dir}/stats.npz',
-                             t=timesteps,
-                             sampling_error=sampling_error,
-                             kl_ros_target=kl_ros_target,
-                             entropy_target=entropy_target,
-                             entropy_ros=entropy_ros)
     envs.close()
 
 if __name__ == "__main__":
