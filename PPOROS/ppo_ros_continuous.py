@@ -735,9 +735,9 @@ def main():
                 ppo_logs[key].append(ppo_stats[key])
         if args.ros and global_step % args.ros_num_steps == 0 :# and global_step > 25000:
             # Set ROS policy equal to current target policy
-            if global_step % args.num_steps == 0:
-                for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
-                    source_param.data.copy_(dump_param.data)
+            # if global_step % args.num_steps == 0:
+            for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
+                source_param.data.copy_(dump_param.data)
 
             # ROS behavior update
             ros_stats = update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, buffer_size, writer)
