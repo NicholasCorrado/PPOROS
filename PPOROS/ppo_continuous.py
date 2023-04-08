@@ -58,6 +58,8 @@ def parse_args():
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="results will be saved to <results_dir>/<env_id>/<subdir>/")
+    parser.add_argument("--save-policy", type=bool, default=False)
+
     parser.add_argument("--policy-path", type=str, default=None, help="Path to pretrained policy")
     parser.add_argument("--normalization-dir", type=str, default=None, help="Directory contatining normalization stats")
 
@@ -329,7 +331,7 @@ if __name__ == "__main__":
     if args.policy_path:
         agent = torch.load(args.policy_path)
 
-    eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device)
+    eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=device, save_model=args.save_policy)
 
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
