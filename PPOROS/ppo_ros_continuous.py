@@ -586,7 +586,8 @@ def main():
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
-    num_ros_updates = args.total_timesteps // args.batch_size * (args.num_steps//args.ros_num_steps)
+    # There are (ppo num updates)/(ros num updates) times as many ROS updates.
+    num_ros_updates = num_updates * (args.num_steps//args.ros_num_steps)
 
     obs_dim = envs.single_observation_space.shape[0]
     action_dim = envs.single_action_space.shape[0]
@@ -597,21 +598,6 @@ def main():
     entropy_target = []
     entropy_ros = []
 
-    ppo_logs = {
-        't': [],
-        'approx_kl': [],
-        'clip_frac': [],
-        'policy_loss': [],
-        'entropy': [],
-    }
-    ros_logs = {
-        't': [],
-        'approx_kl': [],
-        'clip_frac': [],
-        'policy_loss': [],
-        'entropy': [],
-        'pushup_loss': [],
-    }
     ppo_logs = defaultdict(lambda: [])
     ros_logs = defaultdict(lambda: [])
 
@@ -620,6 +606,8 @@ def main():
 
     env_reward_normalize = envs.envs[0].env
     env_obs_normalize = envs.envs[0].env.env.env
+
+    target_update = 0
 
     if args.normalization_dir:
         with open(f'{args.normalization_dir}/env_obs_normalize', 'rb') as f:
@@ -633,17 +621,7 @@ def main():
     target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
     ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
 
-    for update in range(1, num_ros_updates + 1):
-        # Annealing the rate if instructed to do so.
-        if args.anneal_lr:
-            frac = 1.0 - (update - 1.0) / num_updates
-            lrnow = frac * args.learning_rate
-            optimizer.param_groups[0]["lr"] = lrnow
-
-            # args.ros_clip_coef = frac * args.ros_clip_coef
-            # ros_lrnow = frac * args.ros_learning_rate
-            # ros_optimizer.param_groups[0]["lr"] = ros_lrnow
-
+    for ros_update in range(1, num_ros_updates + 1):
         for step in range(0, args.ros_num_steps):
             global_step += 1 * args.num_envs
             obs_buffer[buffer_pos] = env_obs_normalize.unnormalize(next_obs) # store unnormalized obs
@@ -730,6 +708,17 @@ def main():
             returns = advantages + values
 
         if global_step % args.num_steps == 0 and args.update_epochs > 0:
+            target_update += 1
+            # Annealing the rate if instructed to do so.
+            if args.anneal_lr:
+                frac = 1.0 - (target_update - 1.0) / num_updates
+                lrnow = frac * args.learning_rate
+                optimizer.param_groups[0]["lr"] = lrnow
+
+                # args.ros_clip_coef = frac * args.ros_clip_coef
+                # ros_lrnow = frac * args.ros_learning_rate
+                # ros_optimizer.param_groups[0]["lr"] = ros_lrnow
+
             ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
             for key, val in ppo_stats.items():
                 ppo_logs[key].append(ppo_stats[key])
