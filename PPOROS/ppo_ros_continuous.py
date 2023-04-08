@@ -365,6 +365,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     clipfracs = []
     skipped_updates = 0
 
+    done_updating = False
     for epoch in range(args.ros_update_epochs):
         # approx_kls = []
         np.random.shuffle(b_inds)
@@ -386,7 +387,10 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
 
                 if args.ros_target_kl:
                     if approx_kl > args.ros_target_kl:
+                        done_updating = True
                         break
+            if done_updating:
+                break
 
             if args.ros_num_actions:
                 for i in range(args.ros_num_actions):
