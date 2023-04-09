@@ -451,7 +451,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
 
 def normalize_obs(obs_rms, obs):
     """Normalises the observation using the running mean and variance of the observations."""
-    return torch.Tensor((obs.detach().numpy() - obs_rms.mean) / np.sqrt(obs_rms.var + 1e-8))
+    return torch.Tensor((obs.cpu().numpy() - obs_rms.mean) / np.sqrt(obs_rms.var + 1e-8))
 
 def normalize_reward(return_rms, rewards):
     """Normalizes the rewards with the running mean rewards and their variance."""
