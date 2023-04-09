@@ -82,8 +82,9 @@ def parse_args():
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
-    args.ros_minibatch_size = int(args.batch_size // args.ros_num_minibatches)
+    args.buffer_size = args.buffer_batches * args.batch_size
+    args.minibatch_size = int(args.buffer_size // args.num_minibatches)
+    args.ros_minibatch_size = int(args.buffer_size // args.ros_num_minibatches)
 
     # cuda support. Currently does not work with normalization
     args.device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
@@ -347,10 +348,10 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     return ppo_stats
 
 
-def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, buffer_size, writer):
+def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer):
 
     # flatten the batch
-    if global_step < buffer_size:
+    if global_step < args.buffer_size:
         end = global_step
     else:
         end = -args.ros_num_steps
@@ -367,6 +368,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     skipped_updates = 0
 
     done_updating = False
+    num_update_minibatches = 0
     for epoch in range(args.ros_update_epochs):
         # approx_kls = []
         np.random.shuffle(b_inds)
@@ -415,6 +417,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
 
             nn.utils.clip_grad_norm_(agent_ros.parameters(), args.max_grad_norm)
             ros_optimizer.step()
+            num_update_minibatches += 1
 
         if done_updating:
             break
@@ -427,6 +430,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
         writer.add_scalar("ros/epochs", epoch+1, global_step)
         writer.add_scalar("ros/skipped_updates", skipped_updates, global_step)
         writer.add_scalar("ros/clipfrac", np.mean(clipfracs), global_step)
+        writer.add_scalar("ros/num_update_minibatches", num_update_minibatches, global_step)
 
         if loss:
             writer.add_scalar("ros/policy_loss", pg_loss.item(), global_step)
@@ -585,11 +589,10 @@ def main():
     eval_module_ros = Evaluate(model=agent_ros, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=args.device, suffix='ros')
 
     # buffer setup
-    buffer_size = args.buffer_batches * args.num_steps
-    obs_buffer = torch.zeros((buffer_size, args.num_envs) + envs.single_observation_space.shape).to(args.device)
-    actions_buffer = torch.zeros((buffer_size, args.num_envs) + envs.single_action_space.shape).to(args.device)
-    rewards_buffer = torch.zeros((buffer_size, args.num_envs)).to(args.device)
-    dones_buffer = torch.zeros((buffer_size, args.num_envs)).to(args.device)
+    obs_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs.single_observation_space.shape).to(args.device)
+    actions_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs.single_action_space.shape).to(args.device)
+    rewards_buffer = torch.zeros((args.buffer_size, args.num_envs)).to(args.device)
+    dones_buffer = torch.zeros((args.buffer_size, args.num_envs)).to(args.device)
     buffer_pos = 0 # index of buffer position to be updated in the current timestep
 
     # initialize RL loop
@@ -636,7 +639,7 @@ def main():
             next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(done).to(args.device)
 
             buffer_pos += 1
-            buffer_pos %= buffer_size
+            buffer_pos %= args.buffer_size
 
             # Only print when at least 1 env is done
             if "final_info" not in infos:
@@ -650,10 +653,10 @@ def main():
                     writer.add_scalar("charts/ros_train_ret", info["episode"]["r"], global_step)
                     writer.add_scalar("charts/episode_length", info["episode"]["l"], global_step)
 
-        if global_step < buffer_size:
+        if global_step < args.buffer_size:
             indices = np.arange(buffer_pos)
         else:
-            indices = (np.arange(buffer_size) + buffer_pos) % buffer_size
+            indices = (np.arange(args.buffer_size) + buffer_pos) % args.buffer_size
 
         # obs = normalize_obs(obs_rms, obs_buffer.clone()[indices])
         obs = obs_buffer[indices]
@@ -712,7 +715,7 @@ def main():
                 source_param.data.copy_(dump_param.data)
 
             # perform ROS behavior update and log stats
-            ros_stats = update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, buffer_size, writer)
+            ros_stats = update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer)
             for key, val in ros_stats.items():
                 ros_logs[key].append(ros_stats[key])
 
