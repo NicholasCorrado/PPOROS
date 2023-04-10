@@ -442,7 +442,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     if loss:
         ros_stats = {
             't': global_step,
-            'approx_kl': approx_kl,
+            'approx_kl': approx_kl.item(),
             'clip_frac': np.mean(clipfracs),
             'policy_loss': pg_loss.item(),
             # 'entropy': entropy_loss.item(),
