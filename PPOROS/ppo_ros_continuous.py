@@ -123,7 +123,7 @@ def make_env(env_id, idx, capture_video, run_name, gamma, device):
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         env = gym.wrappers.ClipAction(env)
-        env = NormalizeObservation(env, device=device)
+        env = NormalizeObservation(env)
         env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
         env = NormalizeReward(env, gamma=gamma)
         env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
