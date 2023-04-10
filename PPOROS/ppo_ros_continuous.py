@@ -111,7 +111,7 @@ def parse_args():
     return args
 
 
-def make_env(env_id, idx, capture_video, run_name, gamma):
+def make_env(env_id, idx, capture_video, run_name, gamma, device):
     def thunk():
         if capture_video:
             env = gym.make(env_id, render_mode="rgb_array")
@@ -123,7 +123,7 @@ def make_env(env_id, idx, capture_video, run_name, gamma):
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         env = gym.wrappers.ClipAction(env)
-        env = NormalizeObservation(env)
+        env = NormalizeObservation(env, device=device)
         env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
         env = NormalizeReward(env, gamma=gamma)
         env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
@@ -339,7 +339,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
     ppo_stats = {
         't': global_step,
-        'approx_kl': approx_kl,
+        'approx_kl': approx_kl.item(),
         'clip_frac': np.mean(clipfracs),
         'policy_loss': pg_loss.item(),
         'entropy': entropy_loss.item(),
@@ -557,7 +557,7 @@ def main():
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, i, args.capture_video, run_name, args.gamma) for i in range(args.num_envs)]
+        [make_env(args.env_id, i, args.capture_video, run_name, args.gamma, args.device) for i in range(args.num_envs)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
     env_reward_normalize = envs.envs[0].env
@@ -571,7 +571,7 @@ def main():
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     # load pretrained policy and normalization information
     if args.policy_path:
-        agent = torch.load(args.policy_path)
+        agent = torch.load(args.policy_path).to(args.device)
     if args.normalization_dir:
         with open(f'{args.normalization_dir}/env_obs_normalize', 'rb') as f:
             obs_rms = pickle.load(f)
@@ -581,7 +581,7 @@ def main():
             env_reward_normalize.return_rms = return_rms
 
     # ROS behavior agent
-    agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
+    agent_ros = copy.deepcopy(agent).to(args.device)  # initialize ros policy to be equal to the eval policy
     ros_optimizer = optim.Adam(agent_ros.parameters(), lr=args.ros_learning_rate, eps=1e-5)
 
     # Evaluation modules
@@ -665,7 +665,8 @@ def main():
         dones = dones_buffer[indices]
 
         env_obs_normalize.set_update(False)
-        obs = env_obs_normalize.normalize(obs).float()
+        obs = env_obs_normalize.normalize(obs.cpu()).float()
+        obs = obs.to(args.device)
         env_obs_normalize.set_update(True)
 
         env_obs_normalize.set_update(False)
