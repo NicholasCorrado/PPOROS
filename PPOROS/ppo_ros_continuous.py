@@ -505,12 +505,6 @@ def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_
         approx_kl_ros_target = ((ratio - 1) - logratio).mean()
         print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
 
-        timesteps = []
-        sampling_error = []
-        kl_ros_target = []
-        entropy_target = []
-        entropy_ros = []
-
         sampling_error_logs['kl_mle_target'].append(approx_kl_mle_target.item())
         sampling_error_logs['kl_ros_target'].append(approx_kl_ros_target.item())
         sampling_error_logs['ent_target'].append(ent_target.mean().item())
@@ -518,11 +512,7 @@ def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_
         sampling_error_logs['t'].append(global_step)
 
         np.savez(f'{args.save_dir}/stats.npz',
-                 t=timesteps,
-                 sampling_error=sampling_error,
-                 kl_ros_target=kl_ros_target,
-                 entropy_target=entropy_target,
-                 entropy_ros=entropy_ros)
+                 **sampling_error_logs)
 
 def main():
     args = parse_args()
