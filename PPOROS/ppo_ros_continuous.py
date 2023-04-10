@@ -724,6 +724,8 @@ def main():
         if global_step % (args.num_steps*args.eval_freq) == 0:
             current_time = time.time() - start_time
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
+            agent = agent.to(args.device)
+            agent_ros = agent_ros.to(args.device)
             target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
             ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
 
