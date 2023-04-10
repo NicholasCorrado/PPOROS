@@ -569,10 +569,6 @@ def main():
     # PPO target agent
     agent = Agent(envs).to(args.device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
-    # ROS behavior agent
-    agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
-    ros_optimizer = optim.Adam(agent_ros.parameters(), lr=args.ros_learning_rate, eps=1e-5)
-
     # load pretrained policy and normalization information
     if args.policy_path:
         agent = torch.load(args.policy_path)
@@ -583,6 +579,10 @@ def main():
         with open(f'{args.normalization_dir}/env_reward_normalize', 'rb') as f:
             return_rms = pickle.load(f)
             env_reward_normalize.return_rms = return_rms
+
+    # ROS behavior agent
+    agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
+    ros_optimizer = optim.Adam(agent_ros.parameters(), lr=args.ros_learning_rate, eps=1e-5)
 
     # Evaluation modules
     eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir, device=args.device)
