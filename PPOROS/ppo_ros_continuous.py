@@ -111,7 +111,7 @@ def parse_args():
     return args
 
 
-def make_env(env_id, idx, capture_video, run_name, gamma):
+def make_env(env_id, idx, capture_video, run_name, gamma, device):
     def thunk():
         if capture_video:
             env = gym.make(env_id, render_mode="rgb_array")
@@ -343,7 +343,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
     ppo_stats = {
         't': global_step,
-        'approx_kl': approx_kl,
+        'approx_kl': approx_kl.item(),
         'clip_frac': np.mean(clipfracs),
         'policy_loss': pg_loss.item(),
         'entropy': entropy_loss.item(),
@@ -456,7 +456,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     if loss:
         ros_stats = {
             't': global_step,
-            'approx_kl': approx_kl,
+            'approx_kl': approx_kl.item(),
             'clip_frac': np.mean(clipfracs),
             'policy_loss': pg_loss.item(),
             # 'entropy': entropy_loss.item(),
@@ -519,12 +519,6 @@ def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_
         approx_kl_ros_target = ((ratio - 1) - logratio).mean()
         print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
 
-        timesteps = []
-        sampling_error = []
-        kl_ros_target = []
-        entropy_target = []
-        entropy_ros = []
-
         sampling_error_logs['kl_mle_target'].append(approx_kl_mle_target.item())
         sampling_error_logs['kl_ros_target'].append(approx_kl_ros_target.item())
         sampling_error_logs['ent_target'].append(ent_target.mean().item())
@@ -532,11 +526,7 @@ def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_
         sampling_error_logs['t'].append(global_step)
 
         np.savez(f'{args.save_dir}/stats.npz',
-                 t=timesteps,
-                 sampling_error=sampling_error,
-                 kl_ros_target=kl_ros_target,
-                 entropy_target=entropy_target,
-                 entropy_ros=entropy_ros)
+                 **sampling_error_logs)
 
 def main():
     args = parse_args()
@@ -571,7 +561,7 @@ def main():
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, i, args.capture_video, run_name, args.gamma) for i in range(args.num_envs)]
+        [make_env(args.env_id, i, args.capture_video, run_name, args.gamma, args.device) for i in range(args.num_envs)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
     env_reward_normalize = envs.envs[0].env
@@ -585,7 +575,7 @@ def main():
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     # load pretrained policy and normalization information
     if args.policy_path:
-        agent = torch.load(args.policy_path)
+        agent = torch.load(args.policy_path).to(args.device)
     if args.normalization_dir:
         with open(f'{args.normalization_dir}/env_obs_normalize', 'rb') as f:
             obs_rms = pickle.load(f)
@@ -595,7 +585,7 @@ def main():
             env_reward_normalize.return_rms = return_rms
 
     # ROS behavior agent
-    agent_ros = copy.deepcopy(agent)  # initialize ros policy to be equal to the eval policy
+    agent_ros = copy.deepcopy(agent).to(args.device)  # initialize ros policy to be equal to the eval policy
     ros_optimizer = optim.Adam(agent_ros.parameters(), lr=args.ros_learning_rate, eps=1e-5)
 
     # Evaluation modules
@@ -679,7 +669,8 @@ def main():
         # dones = dones_buffer[indices]
 
         env_obs_normalize.set_update(False)
-        obs = env_obs_normalize.normalize(obs_buffer).float()
+        obs = env_obs_normalize.normalize(obs.cpu()).float()
+        obs = obs.to(args.device)
         env_obs_normalize.set_update(True)
 
         env_obs_normalize.set_update(False)
@@ -741,6 +732,8 @@ def main():
         if global_step % (args.num_steps*args.eval_freq) == 0:
             current_time = time.time() - start_time
             print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
+            agent = agent.to(args.device)
+            agent_ros = agent_ros.to(args.device)
             target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
             ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
 

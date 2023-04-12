@@ -74,7 +74,7 @@ class NormalizeObservation(gym.Wrapper):
         return (obs - self.obs_rms.mean) / np.sqrt(self.obs_rms.var + self.epsilon)
 
     def unnormalize(self, normalized_obs):
-        return normalized_obs * np.sqrt(self.obs_rms.var + self.epsilon) + self.obs_rms.mean
+        return normalized_obs.cpu() * np.sqrt(self.obs_rms.var + self.epsilon) + self.obs_rms.mean
 
 class NormalizeReward(gym.core.Wrapper):
     r"""This wrapper will normalize immediate rewards s.t. their exponential moving average has a fixed variance.
