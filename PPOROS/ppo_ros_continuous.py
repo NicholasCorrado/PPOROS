@@ -669,7 +669,7 @@ def main():
         # dones = dones_buffer[indices]
 
         env_obs_normalize.set_update(False)
-        obs = env_obs_normalize.normalize(obs.cpu()).float()
+        obs = env_obs_normalize.normalize(obs_buffer.cpu()).float()
         obs = obs.to(args.device)
         env_obs_normalize.set_update(True)
 
