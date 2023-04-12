@@ -68,8 +68,8 @@ def parse_args():
     parser.add_argument("--ros-ent-coef", type=float, default=0.0, help="coefficient of the entropy in ros update")
     parser.add_argument("--ros-target-kl", type=float, default=0.05, help="the target KL divergence threshold")
     parser.add_argument("--ros-max-kl", type=float, default=None, help="the target KL divergence threshold")
-    parser.add_argument("--ros-num-actions", type=int, default=10, help="the target KL divergence threshold")
-    parser.add_argument("--ros-lambda", type=float, default=0.01, help="the target KL divergence threshold")
+    parser.add_argument("--ros-num-actions", type=int, default=0, help="the target KL divergence threshold")
+    parser.add_argument("--ros-lambda", type=float, default=0.0, help="the target KL divergence threshold")
     parser.add_argument("--ros-uniform-sampling", type=bool, default=False, help="the target KL divergence threshold")
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
 
@@ -164,6 +164,7 @@ class Agent(nn.Module):
     def get_action_and_value(self, x, action=None):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
+        action_logstd = torch.clamp(action_logstd, min=-4, max=1)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         if action is None:
@@ -174,6 +175,7 @@ class Agent(nn.Module):
         action_mean = self.actor_mean(x)
         if noise:
             action_logstd = self.actor_logstd.expand_as(action_mean)
+            action_logstd = torch.clamp(action_logstd, min=-4, max=1)
             action_std = torch.exp(action_logstd)
             probs = Normal(action_mean, action_std)
             action = probs.sample()
@@ -184,6 +186,7 @@ class Agent(nn.Module):
     def get_action_and_info(self, x, action=None):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
+        action_logstd = torch.clamp(action_logstd, min=-4, max=1)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         if action is None:
@@ -193,6 +196,7 @@ class Agent(nn.Module):
     def sample_actions(self, x):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
+        action_logstd = torch.clamp(action_logstd, min=-4, max=1)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         action = probs.sample()
@@ -347,6 +351,8 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
     return ppo_stats
 
+def extend_and_repeat(tensor: torch.Tensor, dim: int, repeat: int) -> torch.Tensor:
+    return tensor.unsqueeze(dim).repeat_interleave(repeat, dim=dim)
 
 def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer):
 
@@ -367,6 +373,12 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     clipfracs = []
     skipped_updates = 0
 
+    # action_means = agent_ros.actor_mean(b_obs)
+    # action_means = agent_ros.actor_logstd(b_obs)
+
+    # if args.ros_num_actions:
+    #     b_obs_repeat = extend_and_repeat(b_obs, dim=1, repeat=args.ros_num_actions)
+
     done_updating = False
     num_update_minibatches = 0
     for epoch in range(args.ros_update_epochs):
@@ -375,8 +387,10 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
         for start in range(0, batch_size, minibatch_size):
             end = start + minibatch_size
             mb_inds = b_inds[start:end]
+            mb_obs = b_obs[mb_inds]
+            mb_actions = b_actions[mb_inds]
 
-            _, _, _, ros_logprob, entropy = agent_ros.get_action_and_info(b_obs[mb_inds], b_actions[mb_inds])
+            _, _, _, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
             ros_logratio = ros_logprob - b_logprobs[mb_inds]
             ros_ratio = ros_logratio.exp()
 
@@ -399,7 +413,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                         random_actions = torch.rand_like(b_actions[mb_inds])*2 - 1 # random actions in [-1, +1]
                     else:
                         with torch.no_grad():
-                            random_actions = agent.sample_actions(b_obs[mb_inds])
+                            random_actions = agent.sample_actions_unif(b_obs[mb_inds])
                     _, _, _, pushup_logprob, entropy = agent_ros.get_action_and_info(b_obs[mb_inds], random_actions)
                     pushup_loss += pushup_logprob.mean()
                 pushup_loss = pushup_loss/args.ros_num_actions
@@ -649,10 +663,10 @@ def main():
             indices = (np.arange(args.buffer_size) + buffer_pos) % args.buffer_size
 
         # obs = normalize_obs(obs_rms, obs_buffer.clone()[indices])
-        obs = obs_buffer[indices]
-        actions = actions_buffer[indices]
-        rewards = rewards_buffer[indices]
-        dones = dones_buffer[indices]
+        # obs = obs_buffer[indices]
+        # actions = actions_buffer[indices]
+        # rewards = rewards_buffer[indices]
+        # dones = dones_buffer[indices]
 
         env_obs_normalize.set_update(False)
         obs = env_obs_normalize.normalize(obs.cpu()).float()
@@ -660,8 +674,11 @@ def main():
         env_obs_normalize.set_update(True)
 
         env_obs_normalize.set_update(False)
-        rewards = env_reward_normalize.normalize(rewards).float()
+        rewards = env_reward_normalize.normalize(rewards_buffer).float()
         env_obs_normalize.set_update(True)
+
+        actions = actions_buffer
+        dones = dones_buffer
 
         with torch.no_grad():
             _, _, _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
@@ -675,7 +692,8 @@ def main():
             advantages = torch.zeros_like(rewards).to(args.device)
             lastgaelam = 0
             num_steps = indices.shape[0]
-            for t in reversed(range(num_steps)):
+            for t_idx in reversed(range(num_steps)):
+                t = indices[t_idx]
                 if t == num_steps - 1:
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
