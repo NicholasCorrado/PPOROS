@@ -663,22 +663,19 @@ def main():
             indices = (np.arange(args.buffer_size) + buffer_pos) % args.buffer_size
 
         # obs = normalize_obs(obs_rms, obs_buffer.clone()[indices])
-        # obs = obs_buffer[indices]
-        # actions = actions_buffer[indices]
-        # rewards = rewards_buffer[indices]
-        # dones = dones_buffer[indices]
+        obs = obs_buffer[indices]
+        actions = actions_buffer[indices]
+        rewards = rewards_buffer[indices]
+        dones = dones_buffer[indices]
 
         env_obs_normalize.set_update(False)
-        obs = env_obs_normalize.normalize(obs_buffer.cpu()).float()
+        obs = env_obs_normalize.normalize(obs.cpu()).float()
         obs = obs.to(args.device)
         env_obs_normalize.set_update(True)
 
         env_obs_normalize.set_update(False)
-        rewards = env_reward_normalize.normalize(rewards_buffer).float()
+        rewards = env_reward_normalize.normalize(rewards).float()
         env_obs_normalize.set_update(True)
-
-        actions = actions_buffer
-        dones = dones_buffer
 
         with torch.no_grad():
             _, _, _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
@@ -692,8 +689,7 @@ def main():
             advantages = torch.zeros_like(rewards).to(args.device)
             lastgaelam = 0
             num_steps = indices.shape[0]
-            for t_idx in reversed(range(num_steps)):
-                t = indices[t_idx]
+            for t in reversed(range(num_steps)):
                 if t == num_steps - 1:
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
