@@ -260,13 +260,14 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
     # Optimizing the policy and value network
     batch_size = b_obs.shape[0]
-    minibatch_size = int(batch_size // args.num_minibatches)
+    minibatch_size = args.minibatch_size
 
     b_inds = np.arange(batch_size)
     clipfracs = []
     done_updating = False
+    num_update_minibatches = 0
+
     for epoch in range(args.update_epochs):
-        approx_kls = []
         np.random.shuffle(b_inds)
         for start in range(0, batch_size, minibatch_size):
             end = start + minibatch_size
@@ -281,7 +282,6 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
                 old_approx_kl = (-logratio).mean()
                 approx_kl = ((ratio - 1) - logratio).mean()
                 clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
-                approx_kls.append(approx_kl)
 
                 if args.target_kl is not None:
                     if approx_kl > args.target_kl:
@@ -320,6 +320,9 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
             optimizer.step()
 
+            num_update_minibatches += 1
+
+
         if done_updating:
             break
 
@@ -336,8 +339,9 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
         writer.add_scalar("ppo/policy_loss", pg_loss.item(), global_step)
         writer.add_scalar("ppo/entropy", entropy_loss.item(), global_step)
         writer.add_scalar("ppo/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("ppo/approx_kl", approx_kl, global_step)
+        writer.add_scalar("ppo/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("ppo/epochs", epoch+1, global_step)
+        writer.add_scalar("ros/num_update_minibatches", num_update_minibatches, global_step)
         writer.add_scalar("ppo/clip_frac", np.mean(clipfracs), global_step)
         writer.add_scalar("ppo/explained_variance", explained_var, global_step)
         # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
@@ -350,6 +354,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
         'old_approx_kl': old_approx_kl.item(),
         'approx_kl': approx_kl.item(),
         'epochs': epoch+1,
+        'num_update_minibatches': num_update_minibatches,
         'clip_frac': np.mean(clipfracs),
         'explained_variance': explained_var,
     }

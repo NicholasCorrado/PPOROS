@@ -34,7 +34,7 @@ def gen_args(device, length, arg_generator, **kwargs):
 
     mem, disk, other_args = arg_generator(**kwargs)
     default_args = f"{mem},{disk},"
-    args = default_args + other_args + " --wandb-project-name PPOROS"
+    args = default_args + other_args + " --wandb-project-name PPOROS --track 1"
 
     return args
 
