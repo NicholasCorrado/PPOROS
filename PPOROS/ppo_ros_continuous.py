@@ -462,7 +462,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                     break
             approx_kl_to_log = approx_kl.item()
 
-        for start in range(0, batch_size, minibatch_size):
+        for start in range(minibatch_size, batch_size, minibatch_size):
             pushup_loss = 0
             if args.ros_num_actions:
                 for i in range(args.ros_num_actions):
