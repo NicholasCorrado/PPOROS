@@ -369,13 +369,14 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
         'policy_loss': pg_loss.item(),
         'entropy': entropy_loss.item(),
         'old_approx_kl': old_approx_kl.item(),
-        'approx_kl': approx_kl_to_log,
         'epochs': epoch+1,
         'num_update_minibatches': num_update_minibatches,
         'clip_frac': np.mean(clipfracs),
         'explained_variance': explained_var,
         'grad_norm': np.mean(grad_norms)
     }
+    if approx_kl_to_log:
+        ppo_stats['approx_kl'] = approx_kl_to_log
 
     return ppo_stats
 
@@ -517,13 +518,14 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             'policy_loss': pg_loss.item(),
             'entropy': entropy_loss.item(),
             'old_approx_kl': old_approx_kl.item(),
-            'approx_kl': approx_kl_to_log,
             'epochs': epoch + 1,
             'clip_frac': np.mean(clipfracs),
             'grad_norm': np.mean(grad_norms),
         }
         if pushup_loss:
             ros_stats['pushup_loss'] = pushup_loss.item()
+        if approx_kl_to_log:
+            ros_stats['approx_kl'] = approx_kl_to_log
 
     return ros_stats
 
