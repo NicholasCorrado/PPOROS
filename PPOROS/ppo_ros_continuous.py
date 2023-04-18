@@ -73,6 +73,7 @@ def parse_args():
     parser.add_argument("--ros-lambda", type=float, default=0.0, help="the target KL divergence threshold")
     parser.add_argument("--ros-uniform-sampling", type=bool, default=False, help="the target KL divergence threshold")
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--ros-eval", type=int, default=False)
 
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
@@ -666,7 +667,8 @@ def main():
 
     # evaluate initial policy
     eval_module.evaluate(global_step, train_env=envs, noise=False)
-    eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
+    if args.ros_eval:
+        eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
 
     for ros_update in range(1, num_ros_updates + 1):
         for step in range(0, args.ros_num_steps):
@@ -779,7 +781,8 @@ def main():
             agent = agent.to(args.device)
             agent_ros = agent_ros.to(args.device)
             target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
-            ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
+            if args.ros_eval:
+                ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
 
             # save stats
             np.savez(f'{args.save_dir}/ppo_stats.npz', **ppo_logs)
@@ -787,7 +790,8 @@ def main():
 
             if args.track:
                 writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
-                writer.add_scalar("charts/ros_eval_return", ros_ret, global_step)
+                if args.ros_eval:
+                    writer.add_scalar("charts/ros_eval_return", ros_ret, global_step)
 
             if args.compute_sampling_error:
                 compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
