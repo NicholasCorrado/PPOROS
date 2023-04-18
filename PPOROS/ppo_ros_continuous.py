@@ -264,6 +264,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
     b_inds = np.arange(batch_size)
     clipfracs = []
+    grad_norms = []
     done_updating = False
     num_update_minibatches = 0
     approx_kl_to_log = None
@@ -320,6 +321,16 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
             optimizer.zero_grad()
             loss.backward()
+
+            # compute grad norm
+            total_norm = 0
+            grads = [p.grad for p in agent.parameters() if p.grad is not None]
+            for grad in grads:
+                param_norm = grad.detach().data.norm(2)
+                total_norm += param_norm.item() ** 2
+            total_norm = total_norm ** 0.5
+            grad_norms.append(total_norm)
+
             nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
             optimizer.step()
 
@@ -347,6 +358,8 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
         writer.add_scalar("ppo/num_update_minibatches", num_update_minibatches, global_step)
         writer.add_scalar("ppo/clip_frac", np.mean(clipfracs), global_step)
         writer.add_scalar("ppo/explained_variance", explained_var, global_step)
+        writer.add_scalar("ppo/grad_norm", np.mean(grad_norms), global_step)
+
         # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
     ppo_stats = {
@@ -360,6 +373,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
         'num_update_minibatches': num_update_minibatches,
         'clip_frac': np.mean(clipfracs),
         'explained_variance': explained_var,
+        'grad_norm': np.mean(grad_norms)
     }
 
     return ppo_stats
@@ -400,6 +414,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     pg_loss = None
     pushup_loss = None
     approx_kl_to_log = None
+    grad_norms = []
 
     for epoch in range(args.ros_update_epochs):
         # approx_kls = []
@@ -457,6 +472,15 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             ros_optimizer.zero_grad()
             loss.backward()
 
+            # compute grad norm
+            total_norm = 0
+            grads = [p.grad for p in agent_ros.parameters() if p.grad is not None]
+            for grad in grads:
+                param_norm = grad.detach().data.norm(2)
+                total_norm += param_norm.item() ** 2
+            total_norm = total_norm ** 0.5
+            grad_norms.append(total_norm)
+
             nn.utils.clip_grad_norm_(agent_ros.parameters(), args.max_grad_norm)
             ros_optimizer.step()
             num_update_minibatches += 1
@@ -477,6 +501,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
         writer.add_scalar("ros/min_logprob_buffer", min_logprob_buffer, global_step)
         writer.add_scalar("ros/min_logprob_ros", min_logprob_ros, global_step)
         writer.add_scalar("ros/min_logprob_pushup", min_logprob_pushup, global_step)
+        writer.add_scalar("ppo/grad_norm", np.mean(grad_norms), global_step)
 
         if pg_loss:
             writer.add_scalar("ros/policy_loss", pg_loss.item(), global_step)
@@ -494,6 +519,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             'approx_kl': approx_kl_to_log,
             'epochs': epoch + 1,
             'clip_frac': np.mean(clipfracs),
+            'grad_norm': np.mean(grad_norms),
         }
         if pushup_loss:
             ros_stats['pushup_loss'] = pushup_loss.item()
