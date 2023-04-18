@@ -341,7 +341,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
         writer.add_scalar("ppo/old_approx_kl", old_approx_kl.item(), global_step)
         writer.add_scalar("ppo/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("ppo/epochs", epoch+1, global_step)
-        writer.add_scalar("ros/num_update_minibatches", num_update_minibatches, global_step)
+        writer.add_scalar("ppo/num_update_minibatches", num_update_minibatches, global_step)
         writer.add_scalar("ppo/clip_frac", np.mean(clipfracs), global_step)
         writer.add_scalar("ppo/explained_variance", explained_var, global_step)
         # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
