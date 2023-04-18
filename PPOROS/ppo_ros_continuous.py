@@ -323,16 +323,8 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             optimizer.zero_grad()
             loss.backward()
 
-            # compute grad norm
-            total_norm = 0
-            grads = [p.grad for p in agent.parameters() if p.grad is not None]
-            for grad in grads:
-                param_norm = grad.detach().data.norm(2)
-                total_norm += param_norm.item() ** 2
-            total_norm = total_norm ** 0.5
-            grad_norms.append(total_norm)
-
-            nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
+            grad_norm = nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
+            grad_norms.append(grad_norm)
             optimizer.step()
 
             num_update_minibatches += 1
@@ -474,16 +466,9 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             ros_optimizer.zero_grad()
             loss.backward()
 
-            # compute grad norm
-            total_norm = 0
-            grads = [p.grad for p in agent_ros.parameters() if p.grad is not None]
-            for grad in grads:
-                param_norm = grad.detach().data.norm(2)
-                total_norm += param_norm.item() ** 2
-            total_norm = total_norm ** 0.5
-            grad_norms.append(total_norm)
+            grad_norm = nn.utils.clip_grad_norm_(agent_ros.parameters(), args.ros_max_grad_norm)
+            grad_norms.append(grad_norm)
 
-            nn.utils.clip_grad_norm_(agent_ros.parameters(), args.ros_max_grad_norm)
             ros_optimizer.step()
             num_update_minibatches += 1
 
