@@ -271,29 +271,32 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     num_update_minibatches = 0
     approx_kl_to_log = None
 
+    newlogprob = None
+
     for epoch in range(args.update_epochs):
         np.random.shuffle(b_inds)
-        for start in range(0, batch_size, minibatch_size):
-            end = start + minibatch_size
-            mb_inds = b_inds[start:end]
 
-            _, _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
-            logratio = newlogprob - b_logprobs[mb_inds]
-            ratio = logratio.exp()
+        # compute approx_kl for first mb here
+        start = 0
+        end = start + minibatch_size
+        mb_inds = b_inds[start:end]
+        _, _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
 
-            with torch.no_grad():
-                # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-logratio).mean()
-                approx_kl = ((ratio - 1) - logratio).mean()
-                clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+        logratio = newlogprob - b_logprobs[mb_inds]
+        ratio = logratio.exp()
 
-                if args.target_kl is not None:
-                    if approx_kl > args.target_kl:
-                        done_updating = True
-                        break
+        with torch.no_grad():
+            # calculate approx_kl http://joschu.net/blog/kl-approx.html
+            old_approx_kl = (-logratio).mean()
+            approx_kl = ((ratio - 1) - logratio).mean()
+            clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
-                approx_kl_to_log = approx_kl.item()
+            if args.target_kl is not None:
+                if approx_kl > args.target_kl:
+                    break
+            approx_kl_to_log = approx_kl.item()
 
+        for start in range(minibatch_size, batch_size, minibatch_size):
             mb_advantages = b_advantages[mb_inds]
             if args.norm_adv:
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
@@ -330,6 +333,26 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
             num_update_minibatches += 1
 
+            ## start of next update
+
+            end = start + minibatch_size
+            mb_inds = b_inds[start:end]
+            _, _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+            logratio = newlogprob - b_logprobs[mb_inds]
+            ratio = logratio.exp()
+
+            with torch.no_grad():
+                # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                old_approx_kl = (-logratio).mean()
+                approx_kl = ((ratio - 1) - logratio).mean()
+                clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+
+                if args.target_kl is not None:
+                    if approx_kl > args.target_kl:
+                        done_updating = True
+                        break
+
+                approx_kl_to_log = approx_kl.item()
 
         if done_updating:
             break
@@ -412,35 +435,34 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     grad_norms = []
 
     for epoch in range(args.ros_update_epochs):
-        # approx_kls = []
         np.random.shuffle(b_inds)
+        start = 0
+        end = start + minibatch_size
+        mb_inds = b_inds[start:end]
+        mb_obs = b_obs[mb_inds]
+        mb_actions = b_actions[mb_inds]
+
+        _, _, _, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
+        ros_logratio = ros_logprob - b_logprobs[mb_inds]
+        ros_ratio = ros_logratio.exp()
+
+        with torch.no_grad():
+            # calculate approx_kl http://joschu.net/blog/kl-approx.html
+            old_approx_kl = (-ros_logratio).mean()
+            approx_kl = ((ros_ratio - 1) - ros_logratio).mean()
+            clipfracs += [((ros_ratio - 1.0).abs() > args.ros_clip_coef).float().mean().item()]
+
+            min_logprob = torch.min(ros_logprob)
+            if min_logprob < min_logprob_ros:
+                min_logprob_ros = min_logprob
+
+            if args.ros_target_kl:
+                if approx_kl > args.ros_target_kl:
+                    done_updating = True
+                    break
+            approx_kl_to_log = approx_kl.item()
+
         for start in range(0, batch_size, minibatch_size):
-            end = start + minibatch_size
-            mb_inds = b_inds[start:end]
-            mb_obs = b_obs[mb_inds]
-            mb_actions = b_actions[mb_inds]
-
-            _, _, _, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
-            ros_logratio = ros_logprob - b_logprobs[mb_inds]
-            ros_ratio = ros_logratio.exp()
-
-            with torch.no_grad():
-                # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-ros_logratio).mean()
-                approx_kl = ((ros_ratio - 1) - ros_logratio).mean()
-                clipfracs += [((ros_ratio - 1.0).abs() > args.ros_clip_coef).float().mean().item()]
-
-                min_logprob = torch.min(ros_logprob)
-                if min_logprob < min_logprob_ros:
-                    min_logprob_ros = min_logprob
-
-                if args.ros_target_kl:
-                    if approx_kl > args.ros_target_kl:
-                        done_updating = True
-                        break
-                approx_kl_to_log = approx_kl.item()
-
-
             pushup_loss = 0
             if args.ros_num_actions:
                 for i in range(args.ros_num_actions):
@@ -473,13 +495,39 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             ros_optimizer.step()
             num_update_minibatches += 1
 
+            ## start of the next update
+            end = start + minibatch_size
+            mb_inds = b_inds[start:end]
+            mb_obs = b_obs[mb_inds]
+            mb_actions = b_actions[mb_inds]
+
+            _, _, _, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
+            ros_logratio = ros_logprob - b_logprobs[mb_inds]
+            ros_ratio = ros_logratio.exp()
+
+            with torch.no_grad():
+                # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                old_approx_kl = (-ros_logratio).mean()
+                approx_kl = ((ros_ratio - 1) - ros_logratio).mean()
+                clipfracs += [((ros_ratio - 1.0).abs() > args.ros_clip_coef).float().mean().item()]
+
+                min_logprob = torch.min(ros_logprob)
+                if min_logprob < min_logprob_ros:
+                    min_logprob_ros = min_logprob
+
+                if args.ros_target_kl:
+                    if approx_kl > args.ros_target_kl:
+                        done_updating = True
+                        break
+                approx_kl_to_log = approx_kl.item()
+
         if done_updating:
             break
     # avg_kl = np.mean(approx_kls)
     if args.track:
         writer.add_scalar("ros/learning_rate", ros_optimizer.param_groups[0]["lr"], global_step)
         # writer.add_scalar("ros/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("ros/approx_kl", approx_kl_to_log, global_step)
+        # writer.add_scalar("ros/approx_kl", approx_kl_to_log, global_step)
         # writer.add_scalar("ros/approx_kl", avg_kl, global_step)
         writer.add_scalar("ros/epochs", epoch+1, global_step)
         writer.add_scalar("ros/skipped_updates", skipped_updates, global_step)
@@ -496,6 +544,8 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             # writer.add_scalar("ros/entropy", entropy_loss.item(), global_step)
         if pushup_loss:
             writer.add_scalar("ros/pushup_loss", pushup_loss.item(), global_step)
+        if approx_kl_to_log:
+            writer.add_scalar("ros/approx_kl", approx_kl_to_log, global_step)
 
     ros_stats = {}
     if pg_loss:
