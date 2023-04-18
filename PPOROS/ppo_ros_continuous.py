@@ -501,7 +501,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
         writer.add_scalar("ros/min_logprob_buffer", min_logprob_buffer, global_step)
         writer.add_scalar("ros/min_logprob_ros", min_logprob_ros, global_step)
         writer.add_scalar("ros/min_logprob_pushup", min_logprob_pushup, global_step)
-        writer.add_scalar("ppo/grad_norm", np.mean(grad_norms), global_step)
+        writer.add_scalar("ros/grad_norm", np.mean(grad_norms), global_step)
 
         if pg_loss:
             writer.add_scalar("ros/policy_loss", pg_loss.item(), global_step)
