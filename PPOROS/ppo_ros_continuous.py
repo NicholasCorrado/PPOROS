@@ -43,7 +43,7 @@ def parse_args():
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=2048, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--buffer-batches", "-b", type=int, default=2, help="Number of collect phases to store in buffer")
-    parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
+    parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
     parser.add_argument("--num-minibatches", type=int, default=32, help="the number of mini-batches")
@@ -266,6 +266,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     clipfracs = []
     done_updating = False
     num_update_minibatches = 0
+    approx_kl_to_log = None
 
     for epoch in range(args.update_epochs):
         np.random.shuffle(b_inds)
@@ -287,6 +288,8 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
                     if approx_kl > args.target_kl:
                         done_updating = True
                         break
+
+                approx_kl_to_log = approx_kl.item()
 
             mb_advantages = b_advantages[mb_inds]
             if args.norm_adv:
@@ -339,7 +342,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
         writer.add_scalar("ppo/policy_loss", pg_loss.item(), global_step)
         writer.add_scalar("ppo/entropy", entropy_loss.item(), global_step)
         writer.add_scalar("ppo/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("ppo/approx_kl", approx_kl.item(), global_step)
+        writer.add_scalar("ppo/approx_kl", approx_kl_to_log, global_step)
         writer.add_scalar("ppo/epochs", epoch+1, global_step)
         writer.add_scalar("ppo/num_update_minibatches", num_update_minibatches, global_step)
         writer.add_scalar("ppo/clip_frac", np.mean(clipfracs), global_step)
@@ -352,7 +355,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
         'policy_loss': pg_loss.item(),
         'entropy': entropy_loss.item(),
         'old_approx_kl': old_approx_kl.item(),
-        'approx_kl': approx_kl.item(),
+        'approx_kl': approx_kl_to_log,
         'epochs': epoch+1,
         'num_update_minibatches': num_update_minibatches,
         'clip_frac': np.mean(clipfracs),
@@ -396,6 +399,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     num_update_minibatches = 0
     pg_loss = None
     pushup_loss = None
+    approx_kl_to_log = None
 
     for epoch in range(args.ros_update_epochs):
         # approx_kls = []
@@ -424,6 +428,8 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                     if approx_kl > args.ros_target_kl:
                         done_updating = True
                         break
+                approx_kl_to_log = approx_kl.item()
+
 
             pushup_loss = 0
             if args.ros_num_actions:
@@ -461,7 +467,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     if args.track:
         writer.add_scalar("ros/learning_rate", ros_optimizer.param_groups[0]["lr"], global_step)
         # writer.add_scalar("ros/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("ros/approx_kl", approx_kl, global_step)
+        writer.add_scalar("ros/approx_kl", approx_kl_to_log, global_step)
         # writer.add_scalar("ros/approx_kl", avg_kl, global_step)
         writer.add_scalar("ros/epochs", epoch+1, global_step)
         writer.add_scalar("ros/skipped_updates", skipped_updates, global_step)
@@ -485,7 +491,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             'policy_loss': pg_loss.item(),
             'entropy': entropy_loss.item(),
             'old_approx_kl': old_approx_kl.item(),
-            'approx_kl': approx_kl.item(),
+            'approx_kl': approx_kl_to_log,
             'epochs': epoch + 1,
             'clip_frac': np.mean(clipfracs),
         }
