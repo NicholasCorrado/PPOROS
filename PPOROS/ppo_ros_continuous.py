@@ -43,7 +43,7 @@ def parse_args():
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=2048, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--buffer-batches", "-b", type=int, default=2, help="Number of collect phases to store in buffer")
-    parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
+    parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
     parser.add_argument("--num-minibatches", type=int, default=32, help="the number of mini-batches")
