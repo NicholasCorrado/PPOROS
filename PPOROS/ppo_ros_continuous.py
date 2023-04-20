@@ -459,7 +459,6 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
 
             if args.ros_target_kl:
                 if approx_kl > args.ros_target_kl:
-                    done_updating = True
                     break
             approx_kl_to_log = approx_kl
 
@@ -528,16 +527,12 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     if args.track:
         writer.add_scalar("ros/learning_rate", ros_optimizer.param_groups[0]["lr"], global_step)
         # writer.add_scalar("ros/old_approx_kl", old_approx_kl.item(), global_step)
-        # writer.add_scalar("ros/approx_kl", approx_kl_to_log, global_step)
-        # writer.add_scalar("ros/approx_kl", avg_kl, global_step)
         writer.add_scalar("ros/epochs", epoch+1, global_step)
-        writer.add_scalar("ros/skipped_updates", skipped_updates, global_step)
         writer.add_scalar("ros/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("ros/num_update_minibatches", num_update_minibatches, global_step)
-
-        writer.add_scalar("ros/min_logprob_buffer", min_logprob_buffer, global_step)
-        writer.add_scalar("ros/min_logprob_ros", min_logprob_ros, global_step)
-        writer.add_scalar("ros/min_logprob_pushup", min_logprob_pushup, global_step)
+        # writer.add_scalar("ros/min_logprob_buffer", min_logprob_buffer, global_step)
+        # writer.add_scalar("ros/min_logprob_ros", min_logprob_ros, global_step)
+        # writer.add_scalar("ros/min_logprob_pushup", min_logprob_pushup, global_step)
         writer.add_scalar("ros/grad_norm", np.mean(grad_norms), global_step)
 
         if pg_loss:
