@@ -328,7 +328,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             loss.backward()
 
             grad_norm = nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
-            grad_norms.append(grad_norm)
+            grad_norms.append(grad_norm.detach().cpu().numpy())
             optimizer.step()
 
             num_update_minibatches += 1
@@ -490,7 +490,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             loss.backward()
 
             grad_norm = nn.utils.clip_grad_norm_(agent_ros.parameters(), args.ros_max_grad_norm)
-            grad_norms.append(grad_norm)
+            grad_norms.append(grad_norm.detach().cpu().numpy())
 
             ros_optimizer.step()
             num_update_minibatches += 1
@@ -653,6 +653,7 @@ def main():
         writer = None
 
     # seeding
+    print('seed:', args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -767,6 +768,11 @@ def main():
         actions = actions_buffer[indices]
         rewards = rewards_buffer[indices]
         dones = dones_buffer[indices]
+        #
+        # obs = obs_buffer
+        # actions = actions_buffer
+        # rewards = rewards_buffer
+        # dones = dones_buffer
 
         env_obs_normalize.set_update(False)
         obs = env_obs_normalize.normalize(obs.cpu()).float()
