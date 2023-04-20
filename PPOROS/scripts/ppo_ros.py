@@ -29,7 +29,7 @@ def write_args():
     # env_ids = ['Ant-v4', 'Humanoid-v4', 'Swimmer-v4',]
 
     env_ids = ['Hopper-v4', 'Walker2d-v4']
-    env_ids = ['Ant-v4']
+    env_ids = ['Humanoid-v4']
 
     # for env_id in env_ids:
     #     for lr in [1e-3, 1e-4]:
@@ -94,13 +94,13 @@ def write_args():
             if env_id in ['Ant-v4']:
                 num_steps_list = [1024, 2048, 4096, 8192]
             if env_id in ['Humanoid-v4']:
-                num_steps_list = [4096, 8192]
+                num_steps_list = [8192]
             for num_steps in num_steps_list:
                 ros_num_steps = 256
-                for lr in [1e-3, 1e-4]:
+                for lr in [1e-4]:
                     for lr_ros in [1e-3, 1e-4]:
-                        for ros_clip_coef in [0.2]:
-                            for ros_update_epochs in [5, 10]:
+                        for ros_clip_coef in [0.3]:
+                            for ros_update_epochs in [4,8]:
                                 for update_epochs in [10]:
                                     target_kl = BEST_PPO_PARAMS[env_id]['target_kl']
                                     for ros_target_kl in [0.05]:
@@ -120,6 +120,7 @@ def write_args():
                                             ros_target_kl=ros_target_kl,
                                             ros_clip_coef=ros_clip_coef,
                                             stats=0,
+                                            anneal_lr=1
                                         )
                                         write_to_file(f, args)
 

@@ -1,38 +1,5 @@
 from PPOROS.scripts.utils import ppo, gen_args, write_to_file, TIMESTEPS
 
-BEST_PPO_PARAMS = {
-    'Swimmer-v4':
-        {
-            'num_steps': 2048,
-            'lr': 1e-3,
-        },
-    'HalfCheetah-v4':
-        {
-            'num_steps': 1024,
-            'lr': 1e-4,
-        },
-    'Hopper-v4':
-        {
-            'num_steps': 2048,
-            'lr': 5e-4,
-        },
-    'Walker2d-v4':
-        {
-            'num_steps': 8192,
-            'lr': 5e-4,
-        },
-    'Ant-v4':
-        {
-            'num_steps': 1024,
-            'lr': 1e-4,
-        },
-    'Humanoid-v4':
-        {
-            'num_steps': 8192,
-            'lr': 1e-4,
-        },
-}
-
 def write_args():
 
 

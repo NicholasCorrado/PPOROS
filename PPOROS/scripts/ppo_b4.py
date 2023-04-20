@@ -6,15 +6,17 @@ if __name__ == "__main__":
     f = open(f"args/ppo_buffer.txt", "w")
     for env_id in env_ids:
         for lr in [1e-3, 1e-4]:
-            for history in [2,4]:
+            for history in [4]:
                 for num_steps in [1024, 2048, 4096, 8192]:
-                    for target_kl in [0.05, 0.1]:
+                    for target_kl in [0.1]:
+                        epochs = 10
                         args = gen_args(
                             device='cpu',
                             length="short",
                             arg_generator=ppo_buffer,
                             env_id=env_id,
                             lr=lr,
+                            epochs=epochs,
                             num_steps=num_steps,
                             ros_history=history,
                             target_kl=target_kl,
