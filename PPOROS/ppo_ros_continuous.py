@@ -821,8 +821,6 @@ def main():
 
             # perform target update and log stats
             ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
-            for key, val in ppo_stats.items():
-                ppo_logs[key].append(ppo_stats[key])
 
         if args.ros and global_step % args.ros_num_steps == 0 :# and global_step > 25000:
             # Set ROS policy equal to current target policy
