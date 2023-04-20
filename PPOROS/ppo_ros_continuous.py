@@ -841,15 +841,15 @@ def main():
             if args.ros_eval:
                 ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
 
-            # save stats
-            np.savez(f'{args.save_dir}/ppo_stats.npz', **ppo_logs)
-            np.savez(f'{args.save_dir}/ros_stats.npz', **ros_logs)
+            # for key, val in ppo_stats.items():
+            #     ppo_logs[key].append(ppo_stats[key])
+            # for key, val in ros_stats.items():
+            #     ros_logs[key].append(ros_stats[key])
 
-            print(ppo_logs, ros_logs)
-            for key, val in ppo_stats.items():
-                ppo_logs[key].append(ppo_stats[key])
-            for key, val in ros_stats.items():
-                ros_logs[key].append(ros_stats[key])
+            # save stats
+            # np.savez(f'{args.save_dir}/ppo_stats.npz', **ppo_logs)
+            # np.savez(f'{args.save_dir}/ros_stats.npz', **ros_logs)
+
 
             if args.track:
                 writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
