@@ -75,6 +75,7 @@ def parse_args():
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-eval", type=int, default=False)
 
+    parser.add_argument("--log-stats", type=int, default=False)
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
@@ -294,7 +295,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             if args.target_kl is not None:
                 if approx_kl > args.target_kl:
                     break
-            approx_kl_to_log = approx_kl.item()
+            approx_kl_to_log = approx_kl
 
         for start in range(minibatch_size, batch_size, minibatch_size):
             mb_advantages = b_advantages[mb_inds]
@@ -352,7 +353,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
                         done_updating = True
                         break
 
-                approx_kl_to_log = approx_kl.item()
+                approx_kl_to_log = approx_kl
 
         if done_updating:
             break
@@ -381,18 +382,18 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
     ppo_stats = {
         't': global_step,
-        'value_loss': v_loss.item(),
-        'policy_loss': pg_loss.item(),
-        'entropy': entropy_loss.item(),
-        'old_approx_kl': old_approx_kl.item(),
+        'value_loss': float(v_loss.item()),
+        'policy_loss': float(pg_loss.item()),
+        'entropy': float(entropy_loss.item()),
+        'old_approx_kl': float(old_approx_kl.item()),
         'epochs': epoch+1,
-        'num_update_minibatches': num_update_minibatches,
-        'clip_frac': np.mean(clipfracs),
-        'explained_variance': explained_var,
-        'grad_norm': np.mean(grad_norms)
+        'num_update_minibatches': float(num_update_minibatches),
+        'clip_frac': float(np.mean(clipfracs)),
+        'explained_variance': float(explained_var),
+        'grad_norm': float(np.mean(grad_norms))
     }
     if approx_kl_to_log:
-        ppo_stats['approx_kl'] = approx_kl_to_log
+        ppo_stats['approx_kl'] = float(approx_kl_to_log.item())
 
     return ppo_stats
 
@@ -460,7 +461,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                 if approx_kl > args.ros_target_kl:
                     done_updating = True
                     break
-            approx_kl_to_log = approx_kl.item()
+            approx_kl_to_log = approx_kl
 
         for start in range(minibatch_size, batch_size, minibatch_size):
             pushup_loss = 0
@@ -519,7 +520,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                     if approx_kl > args.ros_target_kl:
                         done_updating = True
                         break
-                approx_kl_to_log = approx_kl.item()
+                approx_kl_to_log = approx_kl
 
         if done_updating:
             break
@@ -551,17 +552,17 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     if pg_loss:
         ros_stats = {
             't': global_step,
-            'policy_loss': pg_loss.item(),
-            'entropy': entropy_loss.item(),
-            'old_approx_kl': old_approx_kl.item(),
+            'policy_loss': float(pg_loss.item()),
+            'entropy': float(entropy_loss.item()),
+            'old_approx_kl': float(old_approx_kl.item()),
             'epochs': epoch + 1,
-            'clip_frac': np.mean(clipfracs),
-            'grad_norm': np.mean(grad_norms),
+            'clip_frac': float(np.mean(clipfracs)),
+            'grad_norm': float(np.mean(grad_norms)),
         }
         if pushup_loss:
-            ros_stats['pushup_loss'] = pushup_loss.item()
+            ros_stats['pushup_loss'] = float(pushup_loss.item())
         if approx_kl_to_log:
-            ros_stats['approx_kl'] = approx_kl_to_log
+            ros_stats['approx_kl'] = float(approx_kl_to_log.item())
 
     return ros_stats
 
@@ -841,14 +842,14 @@ def main():
             if args.ros_eval:
                 ros_ret, ros_std = eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
 
-            # for key, val in ppo_stats.items():
-            #     ppo_logs[key].append(ppo_stats[key])
-            # for key, val in ros_stats.items():
-            #     ros_logs[key].append(ros_stats[key])
-
             # save stats
-            # np.savez(f'{args.save_dir}/ppo_stats.npz', **ppo_logs)
-            # np.savez(f'{args.save_dir}/ros_stats.npz', **ros_logs)
+            if args.log_stats:
+                for key, val in ppo_stats.items():
+                    ppo_logs[key].append(ppo_stats[key])
+                for key, val in ros_stats.items():
+                    ros_logs[key].append(ros_stats[key])
+                np.savez(f'{args.save_dir}/ppo_stats.npz', **ppo_logs)
+                np.savez(f'{args.save_dir}/ros_stats.npz', **ros_logs)
 
 
             if args.track:
