@@ -721,6 +721,9 @@ def main():
     if args.ros_eval:
         eval_module_ros.evaluate(global_step, train_env=envs, noise=False)
 
+    ppo_stats = {}
+    ros_stats = {}
+
     for ros_update in range(1, num_ros_updates + 1):
         for step in range(0, args.ros_num_steps):
             global_step += 1 * args.num_envs
