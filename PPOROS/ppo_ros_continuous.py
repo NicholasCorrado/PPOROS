@@ -63,7 +63,7 @@ def parse_args():
     parser.add_argument("--ros-max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
     parser.add_argument("--ros-reset-freq", type=int, default=1, help="Reset ROS policy to target policy every ros_reset_freq updates")
-    parser.add_argument("--ros-update-epochs", type=int, default=16, help="the K epochs to update the policy")
+    parser.add_argument("--ros-update-epochs", type=int, default=8, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
     parser.add_argument("--ros-update-freq", type=int, default=1)
     parser.add_argument("--ros-ent-coef", type=float, default=0.0, help="coefficient of the entropy in ros update")
