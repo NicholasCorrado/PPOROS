@@ -827,8 +827,6 @@ def main():
 
             # perform ROS behavior update and log stats
             ros_stats = update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer)
-            for key, val in ros_stats.items():
-                ros_logs[key].append(ros_stats[key])
 
         # Evaluate agent performance
         if global_step % (args.num_steps*args.eval_freq) == 0:
@@ -843,6 +841,12 @@ def main():
             # save stats
             np.savez(f'{args.save_dir}/ppo_stats.npz', **ppo_logs)
             np.savez(f'{args.save_dir}/ros_stats.npz', **ros_logs)
+
+            print(ppo_logs, ros_logs)
+            for key, val in ppo_stats.items():
+                ppo_logs[key].append(ppo_stats[key])
+            for key, val in ros_stats.items():
+                ros_logs[key].append(ros_stats[key])
 
             if args.track:
                 writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
