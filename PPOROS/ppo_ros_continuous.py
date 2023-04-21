@@ -70,7 +70,7 @@ def parse_args():
     parser.add_argument("--ros-ent-coef", type=float, default=0.0, help="coefficient of the entropy in ros update")
     parser.add_argument("--ros-target-kl", type=float, default=0.05, help="the target KL divergence threshold")
     parser.add_argument("--ros-max-kl", type=float, default=None, help="the target KL divergence threshold")
-    parser.add_argument("--ros-num-actions", type=int, default=3, help="the target KL divergence threshold")
+    parser.add_argument("--ros-num-actions", type=int, default=0, help="the target KL divergence threshold")
     parser.add_argument("--ros-lambda", type=float, default=0.0, help="the target KL divergence threshold")
     parser.add_argument("--ros-uniform-sampling", type=bool, default=False, help="the target KL divergence threshold")
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
@@ -405,19 +405,19 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
         # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
     ppo_stats = {
-        't': global_step,
-        'value_loss': float(v_loss.item()),
-        'policy_loss': float(pg_loss.item()),
-        'entropy': float(entropy_loss.item()),
-        'old_approx_kl': float(old_approx_kl.item()),
-        'epochs': epoch+1,
-        'num_update_minibatches': float(num_update_minibatches),
-        'clip_frac': float(np.mean(clipfracs)),
-        'explained_variance': float(explained_var),
-        'grad_norm': float(np.mean(grad_norms))
+        # 't': global_step,
+        'ppo_value_loss': float(v_loss.item()),
+        'ppo_policy_loss': float(pg_loss.item()),
+        'ppo_entropy': float(entropy_loss.item()),
+        'ppo_old_approx_kl': float(old_approx_kl.item()),
+        'ppo_epochs': epoch+1,
+        'ppo_num_update_minibatches': float(num_update_minibatches),
+        'ppo_clip_frac': float(np.mean(clipfracs)),
+        'ppo_explained_variance': float(explained_var),
+        'ppo_grad_norm': float(np.mean(grad_norms))
     }
     if approx_kl_to_log:
-        ppo_stats['approx_kl'] = float(approx_kl_to_log.item())
+        ppo_stats['ppo_approx_kl'] = float(approx_kl_to_log.item())
 
     return ppo_stats
 
@@ -589,18 +589,18 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     ros_stats = {}
     if pg_loss:
         ros_stats = {
-            't': global_step,
-            'policy_loss': float(pg_loss.item()),
-            'entropy': float(entropy_loss.item()),
-            'old_approx_kl': float(old_approx_kl.item()),
-            'epochs': epoch + 1,
-            'clip_frac': float(np.mean(clipfracs)),
-            'grad_norm': float(np.mean(grad_norms)),
+            # 't': global_step,
+            'ros_policy_loss': float(pg_loss.item()),
+            'ros_entropy': float(entropy_loss.item()),
+            'ros_old_approx_kl': float(old_approx_kl.item()),
+            'ros_epochs': epoch + 1,
+            'ros_clip_frac': float(np.mean(clipfracs)),
+            'ros_grad_norm': float(np.mean(grad_norms)),
         }
         if pushup_loss:
-            ros_stats['pushup_loss'] = float(pushup_loss.item())
+            ros_stats['ros_pushup_loss'] = float(pushup_loss.item())
         if approx_kl_to_log:
-            ros_stats['approx_kl'] = float(approx_kl_to_log.item())
+            ros_stats['ros_approx_kl'] = float(approx_kl_to_log.item())
 
     return ros_stats
 
@@ -884,8 +884,16 @@ def main():
                     ppo_logs[key].append(ppo_stats[key])
                 for key, val in ros_stats.items():
                     ros_logs[key].append(ros_stats[key])
-                np.savez(f'{args.save_dir}/ppo_stats.npz', **ppo_logs)
-                np.savez(f'{args.save_dir}/ros_stats.npz', **ros_logs)
+
+            np.savez(
+                eval_module.log_path,
+                timesteps=eval_module.evaluations_timesteps,
+                returns=eval_module.evaluations_returns,
+                successes=eval_module.evaluations_successes,
+                **ppo_logs,
+                **ros_logs
+            )
+            np.savez(f'{args.save_dir}/evaluations.npz')
 
 
             if args.track:
