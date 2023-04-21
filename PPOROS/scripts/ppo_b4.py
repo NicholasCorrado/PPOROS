@@ -2,7 +2,6 @@ from PPOROS.scripts.utils import gen_args, ppo_buffer, write_to_file
 
 if __name__ == "__main__":
     env_ids = [ 'Walker2d-v4', 'Hopper-v4', 'HalfCheetah-v4', 'Swimmer-v4', 'Ant-v4', 'Humanoid-v4']
-    env_ids = [ 'Walker2d-v4', 'HalfCheetah-v4', 'Swimmer-v4', 'Ant-v4', 'Humanoid-v4']
 
     f = open(f"args/ppo_buffer.txt", "w")
     for env_id in env_ids:
