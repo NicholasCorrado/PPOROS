@@ -75,7 +75,7 @@ def parse_args():
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-eval", type=int, default=False)
 
-    parser.add_argument("--log-stats", type=int, default=False)
+    parser.add_argument("--log-stats", type=int, default=1)
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
@@ -189,7 +189,7 @@ class Agent(nn.Module):
     def get_action_and_info(self, x, action=None):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
-        action_logstd = torch.clamp(action_logstd, min=-4, max=1)
+        # action_logstd = torch.clamp(action_logstd, min=-4, max=1)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         if action is None:
@@ -199,7 +199,7 @@ class Agent(nn.Module):
     def sample_actions(self, x):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
-        action_logstd = torch.clamp(action_logstd, min=-4, max=1)
+        # action_logstd = torch.clamp(action_logstd, min=-4, max=1)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         action = probs.sample()
