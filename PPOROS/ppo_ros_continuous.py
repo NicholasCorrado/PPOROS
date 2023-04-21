@@ -186,7 +186,7 @@ class Agent(nn.Module):
             action = action_mean
         return action
 
-    def get_action_and_info(self, x, action=None):
+    def get_action_and_logprob(self, x, action=None):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         # action_logstd = torch.clamp(action_logstd, min=-4, max=1)
@@ -194,7 +194,7 @@ class Agent(nn.Module):
         probs = Normal(action_mean, action_std)
         if action is None:
             action = probs.sample()
-        return action, action_mean, action_std, probs.log_prob(action).sum(1), probs.entropy().sum(1)
+        return action, action_mean, action_std, probs.log_prob(action).sum(1)
 
     def sample_actions(self, x):
         action_mean = self.actor_mean(x)
@@ -252,6 +252,8 @@ class AgentBeta(nn.Module):
         action_mean = alpha / (alpha+beta)
         return action_mean
 
+# def update_ppo_mb(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
+
 def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
     # flatten the batch
     b_obs = obs[:global_step].reshape((-1,) + envs.single_observation_space.shape)
@@ -276,28 +278,27 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
     for epoch in range(args.update_epochs):
         np.random.shuffle(b_inds)
+        for start in range(0, batch_size, minibatch_size):
+            end = start + minibatch_size
+            mb_inds = b_inds[start:end]
 
-        # compute approx_kl for first mb here
-        start = 0
-        end = start + minibatch_size
-        mb_inds = b_inds[start:end]
-        _, _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+            _, _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+            logratio = newlogprob - b_logprobs[mb_inds]
+            ratio = logratio.exp()
 
-        logratio = newlogprob - b_logprobs[mb_inds]
-        ratio = logratio.exp()
+            with torch.no_grad():
+                # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                old_approx_kl = (-logratio).mean()
+                approx_kl = ((ratio - 1) - logratio).mean()
+                clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
-        with torch.no_grad():
-            # calculate approx_kl http://joschu.net/blog/kl-approx.html
-            old_approx_kl = (-logratio).mean()
-            approx_kl = ((ratio - 1) - logratio).mean()
-            clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+                if args.target_kl is not None:
+                    if approx_kl > args.target_kl:
+                        done_updating = True
+                        break
 
-            if args.target_kl is not None:
-                if approx_kl > args.target_kl:
-                    break
-            approx_kl_to_log = approx_kl
+                approx_kl_to_log = approx_kl
 
-        for start in range(minibatch_size, batch_size, minibatch_size):
             mb_advantages = b_advantages[mb_inds]
             if args.norm_adv:
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
@@ -333,27 +334,6 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             optimizer.step()
 
             num_update_minibatches += 1
-
-            ## start of next update
-
-            end = start + minibatch_size
-            mb_inds = b_inds[start:end]
-            _, _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
-            logratio = newlogprob - b_logprobs[mb_inds]
-            ratio = logratio.exp()
-
-            with torch.no_grad():
-                # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-logratio).mean()
-                approx_kl = ((ratio - 1) - logratio).mean()
-                clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
-
-                if args.target_kl is not None:
-                    if approx_kl > args.target_kl:
-                        done_updating = True
-                        break
-
-                approx_kl_to_log = approx_kl
 
         if done_updating:
             break
@@ -437,71 +417,13 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
 
     for epoch in range(args.ros_update_epochs):
         np.random.shuffle(b_inds)
-        start = 0
-        end = start + minibatch_size
-        mb_inds = b_inds[start:end]
-        mb_obs = b_obs[mb_inds]
-        mb_actions = b_actions[mb_inds]
-
-        _, _, _, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
-        ros_logratio = ros_logprob - b_logprobs[mb_inds]
-        ros_ratio = ros_logratio.exp()
-
-        with torch.no_grad():
-            # calculate approx_kl http://joschu.net/blog/kl-approx.html
-            old_approx_kl = (-ros_logratio).mean()
-            approx_kl = ((ros_ratio - 1) - ros_logratio).mean()
-            clipfracs += [((ros_ratio - 1.0).abs() > args.ros_clip_coef).float().mean().item()]
-
-            min_logprob = torch.min(ros_logprob)
-            if min_logprob < min_logprob_ros:
-                min_logprob_ros = min_logprob
-
-            if args.ros_target_kl:
-                if approx_kl > args.ros_target_kl:
-                    break
-            approx_kl_to_log = approx_kl
-
-        for start in range(minibatch_size, batch_size, minibatch_size):
-            pushup_loss = 0
-            if args.ros_num_actions:
-                for i in range(args.ros_num_actions):
-                    if args.ros_uniform_sampling:
-                        random_actions = torch.rand_like(b_actions[mb_inds])*2 - 1 # random actions in [-1, +1]
-                    else:
-                        with torch.no_grad():
-                            random_actions = agent.sample_actions_unif(b_obs[mb_inds])
-                    _, _, _, pushup_logprob, entropy = agent_ros.get_action_and_info(b_obs[mb_inds], random_actions)
-                    min_logprob = torch.min(pushup_logprob)
-                    if min_logprob < min_logprob_pushup:
-                        min_logprob_pushup = min_logprob
-                    pushup_loss += pushup_logprob.mean()
-                pushup_loss = pushup_loss/args.ros_num_actions
-
-            # Policy loss
-            pg_loss1 = ros_ratio
-            pg_loss2 = torch.clamp(ros_ratio, 1 - args.ros_clip_coef, 1 + args.ros_clip_coef)
-            pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-
-            entropy_loss = entropy.mean()
-            loss = pg_loss - args.ros_lambda*pushup_loss #- args.ros_ent_coef * entropy_loss
-
-            ros_optimizer.zero_grad()
-            loss.backward()
-
-            grad_norm = nn.utils.clip_grad_norm_(agent_ros.parameters(), args.ros_max_grad_norm)
-            grad_norms.append(grad_norm.detach().cpu().numpy())
-
-            ros_optimizer.step()
-            num_update_minibatches += 1
-
-            ## start of the next update
+        for start in range(0, batch_size, minibatch_size):
             end = start + minibatch_size
             mb_inds = b_inds[start:end]
             mb_obs = b_obs[mb_inds]
             mb_actions = b_actions[mb_inds]
 
-            _, _, _, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
+            _, _, _, ros_logprob = agent_ros.get_action_and_logprob(mb_obs, mb_actions)
             ros_logratio = ros_logprob - b_logprobs[mb_inds]
             ros_ratio = ros_logratio.exp()
 
@@ -520,6 +442,37 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                         done_updating = True
                         break
                 approx_kl_to_log = approx_kl
+
+            pushup_loss = 0
+            if args.ros_num_actions:
+                for i in range(args.ros_num_actions):
+                    if args.ros_uniform_sampling:
+                        random_actions = torch.rand_like(b_actions[mb_inds])*2 - 1 # random actions in [-1, +1]
+                    else:
+                        with torch.no_grad():
+                            random_actions = agent.sample_actions_unif(b_obs[mb_inds])
+                    _, _, _, pushup_logprob = agent_ros.get_action_and_logprob(b_obs[mb_inds], random_actions)
+                    min_logprob = torch.min(pushup_logprob)
+                    if min_logprob < min_logprob_pushup:
+                        min_logprob_pushup = min_logprob
+                    pushup_loss += pushup_logprob.mean()
+                pushup_loss = pushup_loss/args.ros_num_actions
+
+            # Policy loss
+            pg_loss1 = ros_ratio
+            pg_loss2 = torch.clamp(ros_ratio, 1 - args.ros_clip_coef, 1 + args.ros_clip_coef)
+            pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+            loss = pg_loss - args.ros_lambda*pushup_loss #- args.ros_ent_coef * entropy_loss
+
+            ros_optimizer.zero_grad()
+            loss.backward()
+
+            grad_norm = nn.utils.clip_grad_norm_(agent_ros.parameters(), args.ros_max_grad_norm)
+            grad_norms.append(grad_norm.detach().cpu().numpy())
+
+            ros_optimizer.step()
+            num_update_minibatches += 1
 
         if done_updating:
             break
@@ -548,7 +501,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
         ros_stats = {
             't': global_step,
             'policy_loss': float(pg_loss.item()),
-            'entropy': float(entropy_loss.item()),
+            # 'entropy': float(entropy_loss.item()),
             'old_approx_kl': float(old_approx_kl.item()),
             'epochs': epoch + 1,
             'clip_frac': float(np.mean(clipfracs)),
@@ -590,7 +543,7 @@ def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_
             end = start + mb_size
             mb_inds = b_inds[start:end]
 
-            _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs[mb_inds], b_actions[mb_inds])
+            _, _, _, logprobs_mle = agent_mle.get_action_and_logprob(b_obs[mb_inds], b_actions[mb_inds])
             loss = -torch.mean(logprobs_mle)
 
             optimizer_mle.zero_grad()
@@ -599,15 +552,15 @@ def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_
         # if epoch % 200 == 0:
         #     print(epoch, loss.item())
 
-    _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions)
+    _, _, _, logprobs_mle = agent_mle.get_action_and_logprob(b_obs, b_actions)
 
     with torch.no_grad():
-        _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions)
+        _, _, _, logprobs_target = agent.get_action_and_logprob(b_obs, b_actions)
         logratio = logprobs_mle - logprobs_target
         ratio = logratio.exp()
         approx_kl_mle_target = ((ratio - 1) - logratio).mean()
         print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
-        _, _, _, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions)
+        _, _, _, logprobs_ros = agent_ros.get_action_and_logprob(b_obs, b_actions)
 
         logratio = logprobs_ros - logprobs_target
         ratio = logratio.exp()
@@ -616,8 +569,8 @@ def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_
 
         sampling_error_logs['kl_mle_target'].append(approx_kl_mle_target.item())
         sampling_error_logs['kl_ros_target'].append(approx_kl_ros_target.item())
-        sampling_error_logs['ent_target'].append(ent_target.mean().item())
-        sampling_error_logs['ent_ros'].append(ent_ros.mean().item())
+        # sampling_error_logs['ent_target'].append(ent_target.mean().item())
+        # sampling_error_logs['ent_ros'].append(ent_ros.mean().item())
         sampling_error_logs['t'].append(global_step)
 
         np.savez(f'{args.save_dir}/stats.npz',
