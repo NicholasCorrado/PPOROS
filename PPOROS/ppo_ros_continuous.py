@@ -56,6 +56,7 @@ def parse_args():
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=0.05, help="the target KL divergence threshold")
+    parser.add_argument("--prob-threshold", type=float, default=None, help="")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--ros-learning-rate", "-ros-lr", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
@@ -69,7 +70,7 @@ def parse_args():
     parser.add_argument("--ros-ent-coef", type=float, default=0.0, help="coefficient of the entropy in ros update")
     parser.add_argument("--ros-target-kl", type=float, default=0.05, help="the target KL divergence threshold")
     parser.add_argument("--ros-max-kl", type=float, default=None, help="the target KL divergence threshold")
-    parser.add_argument("--ros-num-actions", type=int, default=0, help="the target KL divergence threshold")
+    parser.add_argument("--ros-num-actions", type=int, default=3, help="the target KL divergence threshold")
     parser.add_argument("--ros-lambda", type=float, default=0.0, help="the target KL divergence threshold")
     parser.add_argument("--ros-uniform-sampling", type=bool, default=False, help="the target KL divergence threshold")
     parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
@@ -178,13 +179,20 @@ class Agent(nn.Module):
         action_mean = self.actor_mean(x)
         if noise:
             action_logstd = self.actor_logstd.expand_as(action_mean)
-            action_logstd = torch.clamp(action_logstd, min=-4, max=1)
+            # action_logstd = torch.clamp(action_logstd, min=-4, max=1)
             action_std = torch.exp(action_logstd)
             probs = Normal(action_mean, action_std)
             action = probs.sample()
         else:
             action = action_mean
         return action
+
+    def get_action_mean_std(self, x):
+        action_mean = self.actor_mean(x)
+        action_logstd = self.actor_logstd.expand_as(action_mean)
+        # action_logstd = torch.clamp(action_logstd, min=-4, max=1)
+        action_std = torch.exp(action_logstd)
+        return action_mean, action_std
 
     def get_action_and_info(self, x, action=None):
         action_mean = self.actor_mean(x)
@@ -206,11 +214,12 @@ class Agent(nn.Module):
         return action
 
     def sample_actions_unif(self, x):
-        action_mean = self.actor_mean(x)
-        action_logstd = self.actor_logstd.expand_as(action_mean)
-        action_std = torch.exp(action_logstd)
-        probs = torch.distributions.Uniform(low=torch.clamp(action_mean-3*action_std,-1,+1), high=torch.clamp(action_mean+3*action_std,-1,+1))
-        action = probs.sample()
+        with torch.no_grad():
+            action_mean = self.actor_mean(x)
+            action_logstd = self.actor_logstd.expand_as(action_mean)
+            action_std = torch.exp(action_logstd)
+            probs = torch.distributions.Uniform(low=torch.clamp(action_mean-3*action_std,-1,+1), high=torch.clamp(action_mean+3*action_std,-1,+1))
+            action = probs.sample()
         return action
 
 class AgentBeta(nn.Module):
@@ -260,6 +269,19 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     b_advantages = advantages[:global_step].reshape(-1)
     b_returns = returns[:global_step].reshape(-1)
     b_values = values[:global_step].reshape(-1)
+
+    if args.prob_threshold:
+        with torch.no_grad():
+            logprob_threshold = np.log(args.prob_threshold)
+            mask = b_logprobs > logprob_threshold
+            mask_frac = torch.mean(mask.type(torch.float))
+
+        b_obs = b_obs[mask]
+        b_logprobs = b_logprobs[mask]
+        b_actions = b_actions[mask]
+        b_advantages = b_advantages[mask]
+        b_returns = b_returns[mask]
+        b_values = b_values[mask]
 
     # Optimizing the policy and value network
     batch_size = b_obs.shape[0]
@@ -377,6 +399,8 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
         writer.add_scalar("ppo/clip_frac", np.mean(clipfracs), global_step)
         writer.add_scalar("ppo/explained_variance", explained_var, global_step)
         writer.add_scalar("ppo/grad_norm", np.mean(grad_norms), global_step)
+        if args.prob_threshold:
+            writer.add_scalar("ppo/mask_frac", mask_frac.item(), global_step)
 
         # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
@@ -400,7 +424,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 def extend_and_repeat(tensor: torch.Tensor, dim: int, repeat: int) -> torch.Tensor:
     return tensor.unsqueeze(dim).repeat_interleave(repeat, dim=dim)
 
-def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer):
+def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer, means, stds):
 
     # flatten the batch
     if global_step < args.buffer_size:
@@ -413,19 +437,24 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     b_logprobs = logprobs[:end].reshape(-1)
     b_actions = actions[:end].reshape((-1,) + envs.single_action_space.shape)
 
+    # action_means = agent_ros.actor_mean(b_obs)
+    # action_means = agent_ros.actor_logstd(b_obs)
+
+    if args.prob_threshold:
+        with torch.no_grad():
+            logprob_threshold = np.log(args.prob_threshold)
+            mask = b_logprobs > logprob_threshold
+            mask_frac = torch.mean(mask.type(torch.float))
+
+        b_obs = b_obs[mask]
+        b_logprobs = b_logprobs[mask]
+        b_actions = b_actions[mask]
+
     batch_size = b_obs.shape[0]
     minibatch_size = args.ros_minibatch_size
     b_inds = np.arange(batch_size)
     clipfracs = []
-    skipped_updates = 0
 
-    # action_means = agent_ros.actor_mean(b_obs)
-    # action_means = agent_ros.actor_logstd(b_obs)
-
-    # if args.ros_num_actions:
-    #     b_obs_repeat = extend_and_repeat(b_obs, dim=1, repeat=args.ros_num_actions)
-    with torch.no_grad():
-        min_logprob_buffer = torch.min(b_logprobs)
     min_logprob_ros = np.inf
     min_logprob_pushup = np.inf
     done_updating = False
@@ -434,6 +463,12 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     pushup_loss = None
     approx_kl_to_log = None
     grad_norms = []
+
+    # if args.ros_num_actions:
+    #     b_obs_repeat = extend_and_repeat(b_obs, dim=1, repeat=args.ros_num_actions)
+
+    # with torch.no_grad():
+    #     means, stds = agent.get_action_mean_std(b_obs)
 
     for epoch in range(args.ros_update_epochs):
         np.random.shuffle(b_inds)
@@ -466,15 +501,21 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             pushup_loss = 0
             if args.ros_num_actions:
                 for i in range(args.ros_num_actions):
+                    random_actions = torch.rand_like(mb_actions) * 2 - 1  # random actions in [-1, +1]
+
                     if args.ros_uniform_sampling:
-                        random_actions = torch.rand_like(b_actions[mb_inds])*2 - 1 # random actions in [-1, +1]
+                        random_actions = torch.rand_like(mb_actions)*2 - 1 # random actions in [-1, +1]
                     else:
-                        with torch.no_grad():
-                            random_actions = agent.sample_actions_unif(b_obs[mb_inds])
-                    _, _, _, pushup_logprob, entropy = agent_ros.get_action_and_info(b_obs[mb_inds], random_actions)
-                    min_logprob = torch.min(pushup_logprob)
-                    if min_logprob < min_logprob_pushup:
-                        min_logprob_pushup = min_logprob
+                        mu = means[mb_inds]
+                        sigma = stds[mb_inds]
+                        agent_probs = torch.distributions.Uniform(
+                            low=torch.clamp(mu - 3 * sigma, -1, +1),
+                            high=torch.clamp(mu + 3 * sigma, -1, +1))
+                        random_actions = agent_probs.sample()
+                    _, _, _, pushup_logprob, entropy = agent_ros.get_action_and_info(mb_obs, random_actions)
+                    # min_logprob = torch.min(pushup_logprob)
+                    # if min_logprob < min_logprob_pushup:
+                    #     min_logprob_pushup = min_logprob
                     pushup_loss += pushup_logprob.mean()
                 pushup_loss = pushup_loss/args.ros_num_actions
 
@@ -534,6 +575,8 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
         # writer.add_scalar("ros/min_logprob_ros", min_logprob_ros, global_step)
         # writer.add_scalar("ros/min_logprob_pushup", min_logprob_pushup, global_step)
         writer.add_scalar("ros/grad_norm", np.mean(grad_norms), global_step)
+        if args.prob_threshold:
+            writer.add_scalar("ros/mask_frac", mask_frac.item(), global_step)
 
         if pg_loss:
             writer.add_scalar("ros/policy_loss", pg_loss.item(), global_step)
@@ -783,7 +826,7 @@ def main():
         env_obs_normalize.set_update(True)
 
         with torch.no_grad():
-            _, _, _, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+            _, means, stds, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
             values = new_value
             logprobs = new_logprob.reshape(-1, 1)
 
@@ -823,7 +866,7 @@ def main():
                 source_param.data.copy_(dump_param.data)
 
             # perform ROS behavior update and log stats
-            ros_stats = update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer)
+            ros_stats = update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer, means, stds)
 
         # Evaluate agent performance
         if global_step % (args.num_steps*args.eval_freq) == 0:
