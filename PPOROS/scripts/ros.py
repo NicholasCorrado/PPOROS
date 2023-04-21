@@ -30,6 +30,7 @@ def write_args():
     env_ids = ['Hopper-v4', 'Walker2d-v4']
     env_ids = ['Humanoid-v4']
     env_ids = ['Walker2d-v4']
+    env_ids = ['Hopper-v4']
 
 
     # for env_id in env_ids:
@@ -90,8 +91,8 @@ def write_args():
 
     for env_id in env_ids:
         f = open(f"args/ros_b24_{env_id}.txt", "w")
-        for buffer_size in [2]:
-            num_steps_list = [1024, 2048, 4096]
+        for buffer_size in [2, 4]:
+            num_steps_list = [1024, 2048]
             if env_id in ['Ant-v4']:
                 num_steps_list = [1024, 2048, 4096, 8192]
             if env_id in ['Humanoid-v4']:
@@ -103,7 +104,7 @@ def write_args():
                         for ros_clip_coef in [0.3]:
                             for ros_update_epochs in [4,8,16]:
                                 for update_epochs in [10]:
-                                    for target_kl in [0.05, 0.1]:
+                                    for target_kl in [0.03]:
                                         for ros_target_kl in [0.05]:
                                             args = gen_args(
                                                 device='cpu',

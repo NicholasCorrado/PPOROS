@@ -1,3 +1,5 @@
+import os
+
 from PPOROS.scripts.utils import ppo, gen_args, write_to_file, TIMESTEPS
 
 def write_args():
@@ -13,15 +15,12 @@ def write_args():
 
     # env_ids = ['Swimmer-v4', 'Humanoid-v4']
 
-    f = open(f"args/discrete.txt", "w")
+    f = open(f"commands/ppo.txt", "w")
 
-
+    os.makedirs('commands', exist_ok=True)
     for env_id in env_ids:
         for lr in [1e-3, 1e-4]:
-
             num_steps_list = [1024, 2048, 4096, 8192]
-            if env_id in ['Ant-v4']:
-                num_steps_list = [1024, 2048, 4096, 8192]
             if env_id in ['Humanoid-v4']:
                 num_steps_list = [4096, 8192]
             for num_steps in num_steps_list:
