@@ -864,6 +864,13 @@ def main():
             ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
 
         if args.ros and global_step % args.ros_num_steps == 0 :# and global_step > 25000:
+
+            # Annealing learning rate
+            if args.anneal_lr:
+                frac = 1.0 - (ros_update - 1.0) / num_ros_updates
+                lrnow = frac * args.ros_learning_rate
+                ros_optimizer.param_groups[0]["lr"] = lrnow
+
             # Set ROS policy equal to current target policy
             for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
                 source_param.data.copy_(dump_param.data)
