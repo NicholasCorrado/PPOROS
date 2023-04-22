@@ -58,7 +58,7 @@ def parse_args():
     parser.add_argument("--target-kl", type=float, default=0.05, help="the target KL divergence threshold")
     parser.add_argument("--prob-threshold", type=float, default=None, help="")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
-    parser.add_argument("--ros-num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--ros-num-steps", type=int, default=1024, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--ros-learning-rate", "-ros-lr", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--ros-clip-coef", type=float, default=0.3, help="the surrogate clipping coefficient")
     parser.add_argument("--ros-max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
@@ -285,7 +285,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
     # Optimizing the policy and value network
     batch_size = b_obs.shape[0]
-    minibatch_size = args.minibatch_size
+    minibatch_size = min(args.minibatch_size, batch_size)
 
     b_inds = np.arange(batch_size)
     clipfracs = []
@@ -451,7 +451,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
         b_actions = b_actions[mask]
 
     batch_size = b_obs.shape[0]
-    minibatch_size = args.ros_minibatch_size
+    minibatch_size = min(args.ros_minibatch_size, batch_size)
     b_inds = np.arange(batch_size)
     clipfracs = []
 
@@ -825,28 +825,12 @@ def main():
         rewards = env_reward_normalize.normalize(rewards).float()
         env_obs_normalize.set_update(True)
 
+        # means, stds = None, None
+        # if global_step % args.num_steps == 0 or global_step < args.buffer_size:
         with torch.no_grad():
             _, means, stds, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
             values = new_value
             logprobs = new_logprob.reshape(-1, 1)
-
-        # Compute returns and advantages -- bootstrap value if not done
-        with torch.no_grad():
-            # next_value = agent.get_value(normalize_obs(obs_rms, next_obs)).reshape(1, -1)
-            next_value = agent.get_value(next_obs).reshape(1, -1)
-            advantages = torch.zeros_like(rewards).to(args.device)
-            lastgaelam = 0
-            num_steps = indices.shape[0]
-            for t in reversed(range(num_steps)):
-                if t == num_steps - 1:
-                    nextnonterminal = 1.0 - next_done
-                    nextvalues = next_value
-                else:
-                    nextnonterminal = 1.0 - dones[t + 1]
-                    nextvalues = values[t + 1]
-                delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-            returns = advantages + values
 
         if global_step % args.num_steps == 0 and args.update_epochs > 0:
             target_update += 1
@@ -857,6 +841,24 @@ def main():
                 lrnow = frac * args.learning_rate
                 optimizer.param_groups[0]["lr"] = lrnow
 
+            # Compute returns and advantages -- bootstrap value if not done
+            with torch.no_grad():
+                # next_value = agent.get_value(normalize_obs(obs_rms, next_obs)).reshape(1, -1)
+                next_value = agent.get_value(next_obs).reshape(1, -1)
+                advantages = torch.zeros_like(rewards).to(args.device)
+                lastgaelam = 0
+                num_steps = indices.shape[0]
+                for t in reversed(range(num_steps)):
+                    if t == num_steps - 1:
+                        nextnonterminal = 1.0 - next_done
+                        nextvalues = next_value
+                    else:
+                        nextnonterminal = 1.0 - dones[t + 1]
+                        nextvalues = values[t + 1]
+                    delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                    advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                returns = advantages + values
+
             # perform target update and log stats
             ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
 
@@ -864,6 +866,12 @@ def main():
             # Set ROS policy equal to current target policy
             for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
                 source_param.data.copy_(dump_param.data)
+
+            # if logprobs is None:
+            #     with torch.no_grad():
+            #         _, means, stds, new_logprob, _, new_value = agent.get_action_and_value(
+            #             obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+            #         logprobs = new_logprob.reshape(-1, 1)
 
             # perform ROS behavior update and log stats
             ros_stats = update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer, means, stds)
