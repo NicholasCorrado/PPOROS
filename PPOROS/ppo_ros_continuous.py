@@ -596,6 +596,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             'ros_epochs': epoch + 1,
             'ros_clip_frac': float(np.mean(clipfracs)),
             'ros_grad_norm': float(np.mean(grad_norms)),
+            'ros/num_update_minibatches': num_update_minibatches,
         }
         if pushup_loss:
             ros_stats['ros_pushup_loss'] = float(pushup_loss.item())
@@ -866,12 +867,6 @@ def main():
             # Set ROS policy equal to current target policy
             for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
                 source_param.data.copy_(dump_param.data)
-
-            # if logprobs is None:
-            #     with torch.no_grad():
-            #         _, means, stds, new_logprob, _, new_value = agent.get_action_and_value(
-            #             obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
-            #         logprobs = new_logprob.reshape(-1, 1)
 
             # perform ROS behavior update and log stats
             ros_stats = update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer, means, stds)
