@@ -60,6 +60,7 @@ def parse_args():
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-num-steps", type=int, default=1024, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--ros-learning-rate", "-ros-lr", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
+    parser.add_argument("--ros-anneal-lr", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--ros-clip-coef", type=float, default=0.3, help="the surrogate clipping coefficient")
     parser.add_argument("--ros-max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
@@ -866,7 +867,7 @@ def main():
         if args.ros and global_step % args.ros_num_steps == 0 :# and global_step > 25000:
 
             # Annealing learning rate
-            if args.anneal_lr:
+            if args.ros_anneal_lr:
                 frac = 1.0 - (ros_update - 1.0) / num_ros_updates
                 lrnow = frac * args.ros_learning_rate
                 ros_optimizer.param_groups[0]["lr"] = lrnow
