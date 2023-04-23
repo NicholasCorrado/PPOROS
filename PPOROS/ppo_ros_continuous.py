@@ -904,8 +904,6 @@ def main():
                 **ppo_logs,
                 **ros_logs
             )
-            np.savez(f'{args.save_dir}/evaluations.npz')
-
 
             if args.track:
                 writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
