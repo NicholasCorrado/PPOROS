@@ -495,8 +495,8 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
                         mu = means[mb_inds]
                         sigma = stds[mb_inds]
                         agent_probs = torch.distributions.Uniform(
-                            low=torch.clamp(mu - 3 * sigma, -1, +1),
-                            high=torch.clamp(mu + 3 * sigma, -1, +1))
+                            low=torch.clamp(mu - sigma, -1, +1),
+                            high=torch.clamp(mu + sigma, -1, +1))
                         random_actions = agent_probs.sample()
                     _, _, _, pushup_logprob, entropy = agent_ros.get_action_and_info(mb_obs, random_actions)
                     pushup_loss += pushup_logprob.mean()
