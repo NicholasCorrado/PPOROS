@@ -425,18 +425,19 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 def extend_and_repeat(tensor: torch.Tensor, dim: int, repeat: int) -> torch.Tensor:
     return tensor.unsqueeze(dim).repeat_interleave(repeat, dim=dim)
 
-def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer, means, stds):
+def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer, means, stds, buffer_pos):
 
     # flatten the batch
     if global_step < args.buffer_size:
-        end = global_step
+        mask = np.ones(global_step, dtype=bool)
     else:
-        end = -args.ros_num_steps
+        mask = np.ones(args.buffer_size, dtype=bool)
+        mask[buffer_pos:buffer_pos+args.ros_num_steps] = False
 
     # flatten the batch
-    b_obs = obs[:end].reshape((-1,) + envs.single_observation_space.shape)
-    b_logprobs = logprobs[:end].reshape(-1)
-    b_actions = actions[:end].reshape((-1,) + envs.single_action_space.shape)
+    b_obs = obs[mask].reshape((-1,) + envs.single_observation_space.shape)
+    b_logprobs = logprobs[mask].reshape(-1)
+    b_actions = actions[mask].reshape((-1,) + envs.single_action_space.shape)
 
     # action_means = agent_ros.actor_mean(b_obs)
     # action_means = agent_ros.actor_logstd(b_obs)
@@ -804,19 +805,16 @@ def main():
 
         if global_step < args.buffer_size:
             indices = np.arange(buffer_pos)
+            obs = obs_buffer[:buffer_pos]
+            actions = actions_buffer[:buffer_pos]
+            rewards = rewards_buffer[:buffer_pos]
+            dones = dones_buffer[:buffer_pos]
         else:
             indices = (np.arange(args.buffer_size) + buffer_pos) % args.buffer_size
-
-        # obs = normalize_obs(obs_rms, obs_buffer.clone()[indices])
-        obs = obs_buffer[indices]
-        actions = actions_buffer[indices]
-        rewards = rewards_buffer[indices]
-        dones = dones_buffer[indices]
-        #
-        # obs = obs_buffer
-        # actions = actions_buffer
-        # rewards = rewards_buffer
-        # dones = dones_buffer
+            obs = obs_buffer
+            actions = actions_buffer
+            rewards = rewards_buffer
+            dones = dones_buffer
 
         env_obs_normalize.set_update(False)
         obs = env_obs_normalize.normalize(obs.cpu()).float()
@@ -850,7 +848,8 @@ def main():
                 advantages = torch.zeros_like(rewards).to(args.device)
                 lastgaelam = 0
                 num_steps = indices.shape[0]
-                for t in reversed(range(num_steps)):
+                for idx in reversed(indices):
+                    t = indices[idx]
                     if t == num_steps - 1:
                         nextnonterminal = 1.0 - next_done
                         nextvalues = next_value
@@ -877,7 +876,7 @@ def main():
                 source_param.data.copy_(dump_param.data)
 
             # perform ROS behavior update and log stats
-            ros_stats = update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer, means, stds)
+            ros_stats = update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer, means, stds, buffer_pos)
 
         # Evaluate agent performance
         if global_step % (args.num_steps*args.eval_freq) == 0:
