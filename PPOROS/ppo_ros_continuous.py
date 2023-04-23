@@ -429,15 +429,14 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
 
     # flatten the batch
     if global_step < args.buffer_size:
-        mask = np.ones(global_step, dtype=bool)
+        start = 0
     else:
-        mask = np.ones(args.buffer_size, dtype=bool)
-        mask[buffer_pos:buffer_pos+args.ros_num_steps] = False
+        start = args.ros_num_steps
 
     # flatten the batch
-    b_obs = obs[mask].reshape((-1,) + envs.single_observation_space.shape)
-    b_logprobs = logprobs[mask].reshape(-1)
-    b_actions = actions[mask].reshape((-1,) + envs.single_action_space.shape)
+    b_obs = obs[start:].reshape((-1,) + envs.single_observation_space.shape)
+    b_logprobs = logprobs[start:].reshape(-1)
+    b_actions = actions[start:].reshape((-1,) + envs.single_action_space.shape)
 
     # action_means = agent_ros.actor_mean(b_obs)
     # action_means = agent_ros.actor_logstd(b_obs)
@@ -805,16 +804,12 @@ def main():
 
         if global_step < args.buffer_size:
             indices = np.arange(buffer_pos)
-            obs = obs_buffer[:buffer_pos]
-            actions = actions_buffer[:buffer_pos]
-            rewards = rewards_buffer[:buffer_pos]
-            dones = dones_buffer[:buffer_pos]
         else:
             indices = (np.arange(args.buffer_size) + buffer_pos) % args.buffer_size
-            obs = obs_buffer
-            actions = actions_buffer
-            rewards = rewards_buffer
-            dones = dones_buffer
+        obs = obs_buffer[indices]
+        actions = actions_buffer[indices]
+        rewards = rewards_buffer[indices]
+        dones = dones_buffer[indices]
 
         env_obs_normalize.set_update(False)
         obs = env_obs_normalize.normalize(obs.cpu()).float()
@@ -848,8 +843,7 @@ def main():
                 advantages = torch.zeros_like(rewards).to(args.device)
                 lastgaelam = 0
                 num_steps = indices.shape[0]
-                for idx in reversed(indices):
-                    t = indices[idx]
+                for t in reversed(range(num_steps)):
                     if t == num_steps - 1:
                         nextnonterminal = 1.0 - next_done
                         nextvalues = next_value
