@@ -514,7 +514,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             entropy_loss = entropy.mean()
-            loss = pg_loss - args.ros_lambda*pushup_loss #- args.ros_ent_coef * entropy_loss
+            loss = pg_loss + args.ros_lambda*pushup_loss #- args.ros_ent_coef * entropy_loss
 
             ros_optimizer.zero_grad()
             loss.backward()
