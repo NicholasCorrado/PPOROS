@@ -808,7 +808,7 @@ def main():
             values = new_value
             logprobs = new_logprob.reshape(-1, 1)
 
-            print(stds.mean(axis=0))
+            # print(stds.mean(axis=0))
 
         if global_step % args.num_steps == 0 and args.update_epochs > 0:
             target_update += 1
