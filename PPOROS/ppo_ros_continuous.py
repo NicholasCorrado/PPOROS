@@ -470,7 +470,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
         mb_obs = b_obs[mb_inds]
         mb_actions = b_actions[mb_inds]
 
-        _, _, _, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
+        _, ros_means, ros_stds, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
         ros_logratio = ros_logprob - b_logprobs[mb_inds]
         ros_ratio = ros_logratio.exp()
 
@@ -486,22 +486,28 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             approx_kl_to_log = approx_kl
 
         for start in range(minibatch_size, batch_size, minibatch_size):
-            pushup_loss = 0
-            if args.ros_num_actions:
-                for i in range(args.ros_num_actions):
-                    if args.ros_uniform_sampling:
-                        random_actions = torch.rand_like(mb_actions)*2 - 1 # random actions in [-1, +1]
-                    else:
-                        mu = means[mb_inds]
-                        sigma = stds[mb_inds]
-                        agent_probs = torch.distributions.Uniform(
-                            low=torch.clamp(mu - sigma, -1, +1),
-                            high=torch.clamp(mu + sigma, -1, +1))
-                        random_actions = agent_probs.sample()
-                    _, _, _, pushup_logprob, entropy = agent_ros.get_action_and_info(mb_obs, random_actions)
-                    pushup_loss += pushup_logprob.mean()
-                pushup_loss = pushup_loss/args.ros_num_actions
+            # pushup_loss = 0
+            # if args.ros_num_actions:
+            #     for i in range(args.ros_num_actions):
+            #         if args.ros_uniform_sampling:
+            #             random_actions = torch.rand_like(mb_actions)*2 - 1 # random actions in [-1, +1]
+            #         else:
+            #             mu = means[mb_inds]
+            #             sigma = stds[mb_inds]
+            #             agent_probs = torch.distributions.Uniform(
+            #                 low=torch.clamp(mu - sigma/4, -1, +1),
+            #                 high=torch.clamp(mu + sigma/4, -1, +1))
+            #             random_actions = agent_probs.sample()
+            #         _, _, _, pushup_logprob, entropy = agent_ros.get_action_and_info(mb_obs, random_actions)
+            #         pushup_loss += pushup_logprob.mean()
+            #     pushup_loss = pushup_loss/args.ros_num_actions
 
+            pushup_loss = 0
+            if args.ros_lambda > 0:
+                mu2 = means[mb_inds]
+                sigma2 = stds[mb_inds]
+                pushup_loss = (torch.log(sigma2/ros_stds) + (ros_stds**2 + (ros_means-mu2)**2)/(2*sigma2**2) - 0.5).mean()
+            # pushup_loss =
             # Policy loss
             pg_loss1 = ros_ratio
             pg_loss2 = torch.clamp(ros_ratio, 1 - args.ros_clip_coef, 1 + args.ros_clip_coef)
@@ -525,7 +531,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
             mb_obs = b_obs[mb_inds]
             mb_actions = b_actions[mb_inds]
 
-            _, _, _, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
+            _, ros_means, ros_stds, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
             ros_logratio = ros_logprob - b_logprobs[mb_inds]
             ros_ratio = ros_logratio.exp()
 
@@ -801,6 +807,8 @@ def main():
             _, means, stds, new_logprob, _, new_value = agent.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
             values = new_value
             logprobs = new_logprob.reshape(-1, 1)
+
+            print(stds.mean(axis=0))
 
         if global_step % args.num_steps == 0 and args.update_epochs > 0:
             target_update += 1
