@@ -86,7 +86,7 @@ def parse_args():
     args.batch_size = int(args.num_envs * args.num_steps)
     args.buffer_size = args.buffer_batches * args.batch_size
     args.minibatch_size = int(args.buffer_size // args.num_minibatches)
-    args.ros_minibatch_size = int(args.buffer_size // args.ros_num_minibatches)
+    args.ros_minibatch_size = args.minibatch_size
 
     # cuda support. Currently does not work with normalization
     args.device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
@@ -425,12 +425,12 @@ def extend_and_repeat(tensor: torch.Tensor, dim: int, repeat: int) -> torch.Tens
 def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer, means, stds, buffer_pos):
 
     # flatten the batch
-    if global_step < args.buffer_size:
+    if global_step <= args.buffer_size-args.ros_num_steps:
         start = 0
         end = global_step
     else:
-        start = 0
-        end = args.ros_num_steps
+        start = args.ros_num_steps
+        end = args.buffer_size
 
     # flatten the batch
     b_obs = obs[start:end].reshape((-1,) + envs.single_observation_space.shape)
