@@ -435,7 +435,8 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     b_obs = obs[start:end].reshape((-1,) + envs.single_observation_space.shape)
     b_logprobs = logprobs[start:end].reshape(-1)
     b_actions = actions[start:end].reshape((-1,) + envs.single_action_space.shape)
-
+    means = means[start:end]
+    stds = stds[start:end]
     # action_means = agent_ros.actor_mean(b_obs)
     # action_means = agent_ros.actor_logstd(b_obs)
 
@@ -463,51 +464,36 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
 
     for epoch in range(args.ros_update_epochs):
         np.random.shuffle(b_inds)
-        start = 0
-        end = start + minibatch_size
-        mb_inds = b_inds[start:end]
-        mb_obs = b_obs[mb_inds]
-        mb_actions = b_actions[mb_inds]
 
-        _, ros_means, ros_stds, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
-        ros_logratio = ros_logprob - b_logprobs[mb_inds]
-        ros_ratio = ros_logratio.exp()
+        for start in range(0, batch_size, minibatch_size):
 
-        with torch.no_grad():
-            # calculate approx_kl http://joschu.net/blog/kl-approx.html
-            old_approx_kl = (-ros_logratio).mean()
-            approx_kl = ((ros_ratio - 1) - ros_logratio).mean()
-            clipfracs += [((ros_ratio - 1.0).abs() > args.ros_clip_coef).float().mean().item()]
+            end = start + minibatch_size
+            mb_inds = b_inds[start:end]
+            mb_obs = b_obs[mb_inds]
+            mb_actions = b_actions[mb_inds]
 
-            if args.ros_target_kl:
-                if approx_kl > args.ros_target_kl:
-                    break
-            approx_kl_to_log = approx_kl
+            _, mu1, sigma1, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
+            ros_logratio = ros_logprob - b_logprobs[mb_inds]
+            ros_ratio = ros_logratio.exp()
 
-        for start in range(minibatch_size, batch_size, minibatch_size):
-            # pushup_loss = 0
-            # if args.ros_num_actions:
-            #     for i in range(args.ros_num_actions):
-            #         if args.ros_uniform_sampling:
-            #             random_actions = torch.rand_like(mb_actions)*2 - 1 # random actions in [-1, +1]
-            #         else:
-            #             mu = means[mb_inds]
-            #             sigma = stds[mb_inds]
-            #             agent_probs = torch.distributions.Uniform(
-            #                 low=torch.clamp(mu - sigma/4, -1, +1),
-            #                 high=torch.clamp(mu + sigma/4, -1, +1))
-            #             random_actions = agent_probs.sample()
-            #         _, _, _, pushup_logprob, entropy = agent_ros.get_action_and_info(mb_obs, random_actions)
-            #         pushup_loss += pushup_logprob.mean()
-            #     pushup_loss = pushup_loss/args.ros_num_actions
+            with torch.no_grad():
+                # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                old_approx_kl = (-ros_logratio).mean()
+                approx_kl = ((ros_ratio - 1) - ros_logratio).mean()
+                clipfracs += [((ros_ratio - 1.0).abs() > args.ros_clip_coef).float().mean().item()]
+
+                if args.ros_target_kl:
+                    if approx_kl > args.ros_target_kl:
+                        done_updating = True
+                        break
+                approx_kl_to_log = approx_kl
 
             pushup_loss = 0
             if args.ros_lambda > 0:
                 mu2 = means[mb_inds]
                 sigma2 = stds[mb_inds]
-                pushup_loss = (torch.log(sigma2/ros_stds) + (ros_stds**2 + (ros_means-mu2)**2)/(2*sigma2**2) - 0.5).mean()
-            # pushup_loss =
-            # Policy loss
+                pushup_loss = (torch.log(sigma2/sigma1) + (sigma1**2 + (mu1-mu2)**2)/(2*sigma2**2) - 0.5).mean()
+
             pg_loss1 = ros_ratio
             pg_loss2 = torch.clamp(ros_ratio, 1 - args.ros_clip_coef, 1 + args.ros_clip_coef)
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
@@ -523,28 +509,6 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
 
             ros_optimizer.step()
             num_update_minibatches += 1
-
-            ## start of the next update
-            end = start + minibatch_size
-            mb_inds = b_inds[start:end]
-            mb_obs = b_obs[mb_inds]
-            mb_actions = b_actions[mb_inds]
-
-            _, ros_means, ros_stds, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
-            ros_logratio = ros_logprob - b_logprobs[mb_inds]
-            ros_ratio = ros_logratio.exp()
-
-            with torch.no_grad():
-                # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-ros_logratio).mean()
-                approx_kl = ((ros_ratio - 1) - ros_logratio).mean()
-                clipfracs += [((ros_ratio - 1.0).abs() > args.ros_clip_coef).float().mean().item()]
-
-                if args.ros_target_kl:
-                    if approx_kl > args.ros_target_kl:
-                        done_updating = True
-                        break
-                approx_kl_to_log = approx_kl
 
         if done_updating:
             break
@@ -789,6 +753,8 @@ def main():
         actions = actions_buffer[indices]
         rewards = rewards_buffer[indices]
         dones = dones_buffer[indices]
+
+        tmp = indices//args.ros_num_steps
 
         env_obs_normalize.set_update(False)
         obs = env_obs_normalize.normalize(obs.cpu()).float()
