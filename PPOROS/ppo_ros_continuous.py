@@ -424,7 +424,6 @@ def extend_and_repeat(tensor: torch.Tensor, dim: int, repeat: int) -> torch.Tens
 
 def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, global_step, args, writer, means, stds, buffer_pos):
 
-    # flatten the batch
     if global_step <= args.buffer_size-args.ros_num_steps:
         start = 0
         end = global_step
