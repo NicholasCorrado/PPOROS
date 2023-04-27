@@ -54,7 +54,7 @@ def parse_args():
     parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
-    parser.add_argument("--target-kl", type=float, default=0.05, help="the target KL divergence threshold")
+    parser.add_argument("--target-kl", type=float, default=0.03, help="the target KL divergence threshold")
     parser.add_argument("--prob-threshold", type=float, default=None, help="")
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-num-steps", type=int, default=1024, help="the number of steps to run in each environment per policy rollout")
