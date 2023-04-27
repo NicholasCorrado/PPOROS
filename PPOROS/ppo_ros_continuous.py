@@ -765,6 +765,10 @@ def main():
         rewards = env_reward_normalize.normalize(rewards).float()
         env_obs_normalize.set_update(True)
 
+        if global_step % (args.num_steps*args.eval_freq) == 0:
+            if args.compute_sampling_error:
+                compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
+
         # means, stds = None, None
         # if global_step % args.num_steps == 0 or global_step <= args.ros_num_steps:
         # Need to recompute every time because new obs are added every time. Also, normalization changes.
@@ -850,9 +854,6 @@ def main():
                 writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
                 if args.ros_eval:
                     writer.add_scalar("charts/ros_eval_return", ros_ret, global_step)
-
-            if args.compute_sampling_error:
-                compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
 
     envs.close()
 
