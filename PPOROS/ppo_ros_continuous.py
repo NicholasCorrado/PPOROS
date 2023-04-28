@@ -59,7 +59,7 @@ def parse_args():
     parser.add_argument("--ros", type=float, default=True, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-num-steps", type=int, default=1024, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--ros-learning-rate", "-ros-lr", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
-    parser.add_argument("--ros-anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for policy and value networks")
+    parser.add_argument("--ros-anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=False, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--ros-clip-coef", type=float, default=0.3, help="the surrogate clipping coefficient")
     parser.add_argument("--ros-max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
@@ -86,7 +86,7 @@ def parse_args():
     args.batch_size = int(args.num_envs * args.num_steps)
     args.buffer_size = args.buffer_batches * args.batch_size
     args.minibatch_size = int(args.buffer_size // args.num_minibatches)
-    args.ros_minibatch_size = args.minibatch_size
+    args.ros_minibatch_size = int((args.buffer_size - args.ros_num_steps) // args.ros_num_minibatches)
 
     # cuda support. Currently does not work with normalization
     args.device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
@@ -297,27 +297,27 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     for epoch in range(args.update_epochs):
         np.random.shuffle(b_inds)
 
-        # compute approx_kl for first mb here
-        start = 0
-        end = start + minibatch_size
-        mb_inds = b_inds[start:end]
-        _, _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+        for start in range(0, batch_size, minibatch_size):
 
-        logratio = newlogprob - b_logprobs[mb_inds]
-        ratio = logratio.exp()
+            end = start + minibatch_size
+            mb_inds = b_inds[start:end]
+            _, _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+            logratio = newlogprob - b_logprobs[mb_inds]
+            ratio = logratio.exp()
 
-        with torch.no_grad():
-            # calculate approx_kl http://joschu.net/blog/kl-approx.html
-            old_approx_kl = (-logratio).mean()
-            approx_kl = ((ratio - 1) - logratio).mean()
-            clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+            with torch.no_grad():
+                # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                old_approx_kl = (-logratio).mean()
+                approx_kl = ((ratio - 1) - logratio).mean()
+                clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
-            if args.target_kl is not None:
-                if approx_kl > args.target_kl:
-                    break
-            approx_kl_to_log = approx_kl
+                if args.target_kl is not None:
+                    if approx_kl > args.target_kl:
+                        done_updating = True
+                        break
 
-        for start in range(minibatch_size, batch_size, minibatch_size):
+                approx_kl_to_log = approx_kl
+
             mb_advantages = b_advantages[mb_inds]
             if args.norm_adv:
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
@@ -353,27 +353,6 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             optimizer.step()
 
             num_update_minibatches += 1
-
-            ## start of next update
-
-            end = start + minibatch_size
-            mb_inds = b_inds[start:end]
-            _, _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
-            logratio = newlogprob - b_logprobs[mb_inds]
-            ratio = logratio.exp()
-
-            with torch.no_grad():
-                # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-logratio).mean()
-                approx_kl = ((ratio - 1) - logratio).mean()
-                clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
-
-                if args.target_kl is not None:
-                    if approx_kl > args.target_kl:
-                        done_updating = True
-                        break
-
-                approx_kl_to_log = approx_kl
 
         if done_updating:
             break
@@ -753,8 +732,6 @@ def main():
         actions = actions_buffer[indices]
         rewards = rewards_buffer[indices]
         dones = dones_buffer[indices]
-
-        tmp = indices//args.ros_num_steps
 
         env_obs_normalize.set_update(False)
         obs = env_obs_normalize.normalize(obs.cpu()).float()
