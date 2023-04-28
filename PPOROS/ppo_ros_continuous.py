@@ -87,7 +87,7 @@ def parse_args():
     args.batch_size = int(args.num_envs * args.num_steps)
     args.buffer_size = args.buffer_batches * args.batch_size
     args.minibatch_size = int(args.buffer_size // args.num_minibatches)
-    args.ros_minibatch_size = int((args.buffer_size - args.ros_num_steps) // args.ros_num_minibatches)
+    args.ros_minibatch_size = int((args.buffer_size-args.ros_num_steps) // args.ros_num_minibatches)
 
     if args.cutoff_timesteps is None:
         args.cutoff_timesteps = args.total_timesteps
@@ -160,7 +160,7 @@ class Agent(nn.Module):
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, np.prod(envs.single_action_space.shape)), std=0.01),
-            nn.Tanh()
+            nn.Tanh(),
         )
         self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
 
@@ -170,7 +170,6 @@ class Agent(nn.Module):
     def get_action_and_value(self, x, action=None):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
-        action_logstd = torch.clamp(action_logstd, min=-4, max=1)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         if action is None:
@@ -188,13 +187,6 @@ class Agent(nn.Module):
         else:
             action = action_mean
         return action
-
-    def get_action_mean_std(self, x):
-        action_mean = self.actor_mean(x)
-        action_logstd = self.actor_logstd.expand_as(action_mean)
-        # action_logstd = torch.clamp(action_logstd, min=-4, max=1)
-        action_std = torch.exp(action_logstd)
-        return action_mean, action_std
 
     def get_action_and_info(self, x, action=None):
         action_mean = self.actor_mean(x)
@@ -219,6 +211,7 @@ class Agent(nn.Module):
         with torch.no_grad():
             action_mean = self.actor_mean(x)
             action_logstd = self.actor_logstd.expand_as(action_mean)
+            # action_logstd = torch.clamp(action_logstd, min=-4, max=1)
             action_std = torch.exp(action_logstd)
             probs = torch.distributions.Uniform(low=torch.clamp(action_mean-3*action_std,-1,+1), high=torch.clamp(action_mean+3*action_std,-1,+1))
             action = probs.sample()
@@ -295,8 +288,6 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     done_updating = False
     num_update_minibatches = 0
     approx_kl_to_log = None
-
-    newlogprob = None
 
     for epoch in range(args.update_epochs):
         np.random.shuffle(b_inds)
@@ -413,6 +404,8 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, gl
     else:
         start = args.ros_num_steps
         end = args.buffer_size
+        # start = 0
+        # end = -args.ros_num_steps
 
     # flatten the batch
     b_obs = obs[start:end].reshape((-1,) + envs.single_observation_space.shape)
@@ -701,9 +694,9 @@ def main():
             with torch.no_grad():
                 if args.ros and np.random.random() < args.ros_mixture_prob:
                     action, action_mean, action_std, logprob_ros, entropy, _ = agent_ros.get_action_and_value(next_obs)
-                    # if args.track:
-                    #     writer.add_scalar("ros/action_mean", action_mean.detach().mean().item(), global_step)
-                    #     writer.add_scalar("ros/action_std", action_std.detach().mean().item(), global_step)
+                    if args.track:
+                        writer.add_scalar("ros/action_mean", action_mean.detach().mean().item(), global_step)
+                        writer.add_scalar("ros/action_std", action_std.detach().mean().item(), global_step)
                 else:
                     action, action_mean, action_std, _, _, _ = agent.get_action_and_value(next_obs)
                 actions_buffer[buffer_pos] = action
