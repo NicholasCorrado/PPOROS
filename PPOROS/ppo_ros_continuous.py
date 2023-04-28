@@ -38,6 +38,7 @@ def parse_args():
     # Algorithm specific arguments
     parser.add_argument("--env-id", type=str, default="Hopper-v4", help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=2000000, help="total timesteps of the experiments")
+    parser.add_argument("--cutoff-timesteps", type=int, default=None, help="total timesteps of the experiments")
     parser.add_argument("--beta", type=int, default=False, help="Sample actions from Beta distribution rather than Gaussian")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="the learning rate of the optimizer")
     parser.add_argument("--num-envs", type=int, default=1, help="the number of parallel game environments")
@@ -87,6 +88,9 @@ def parse_args():
     args.buffer_size = args.buffer_batches * args.batch_size
     args.minibatch_size = int(args.buffer_size // args.num_minibatches)
     args.ros_minibatch_size = int((args.buffer_size - args.ros_num_steps) // args.ros_num_minibatches)
+
+    if args.cutoff_timesteps is None:
+        args.cutoff_timesteps = args.total_timesteps
 
     # cuda support. Currently does not work with normalization
     args.device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
@@ -688,6 +692,7 @@ def main():
     ros_stats = {}
 
     for ros_update in range(1, num_ros_updates + 1):
+        if global_step > args.cutoff_timesteps: break
         for step in range(0, args.ros_num_steps):
             global_step += 1 * args.num_envs
             obs_buffer[buffer_pos] = env_obs_normalize.unnormalize(next_obs) # store unnormalized obs
