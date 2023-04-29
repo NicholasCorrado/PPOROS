@@ -77,6 +77,7 @@ def parse_args():
 
     parser.add_argument("--log-stats", type=int, default=1)
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
+    parser.add_argument("--se-freq", type=int, default=10, help="")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="results will be saved to <results_dir>/<env_id>/<subdir>/")
@@ -740,7 +741,7 @@ def main():
         rewards = env_reward_normalize.normalize(rewards).float()
         env_obs_normalize.set_update(True)
 
-        if global_step % (args.num_steps*args.eval_freq) == 0:
+        if global_step % (args.num_steps*args.se_freq) == 0:
             if args.compute_sampling_error:
                 compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
 
