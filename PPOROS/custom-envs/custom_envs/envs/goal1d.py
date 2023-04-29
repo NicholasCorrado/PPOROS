@@ -2,7 +2,7 @@ from typing import Optional, Tuple
 
 import gymnasium as gym
 import numpy as np
-import seaborn
+# import seaborn
 from matplotlib import pyplot as plt
 
 
@@ -60,7 +60,7 @@ class Goal1DEnv(gym.Env):
 
 if __name__ == "__main__":
 
-    seaborn.set_theme()
+    # seaborn.set_theme()
     n = 100
     x = np.linspace(-1, 1, n)
     y = x**2
