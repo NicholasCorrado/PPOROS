@@ -73,8 +73,8 @@ def parse_args():
     parser.add_argument("--ros-lambda", type=float, default=0.0, help="the target KL divergence threshold")
     parser.add_argument("--ros-uniform-sampling", type=bool, default=False, help="the target KL divergence threshold")
     parser.add_argument("--se", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
-    parser.add_argument("--se-lr", type=int, default=5e-3)
-    parser.add_argument("--se-epochs", type=int, default=10000)
+    parser.add_argument("--se-lr", type=float, default=5e-3)
+    parser.add_argument("--se-epochs", type=int, default=2000)
 
     parser.add_argument("--ros-eval", type=int, default=False)
 
