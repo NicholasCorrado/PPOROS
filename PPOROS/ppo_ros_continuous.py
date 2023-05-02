@@ -539,15 +539,15 @@ def normalize_reward(return_rms, rewards):
     return rewards / np.sqrt(return_rms.var + 1e-8)
 
 def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step):
-    agent_mle = copy.deepcopy(agent)
+    agent_mle = copy.deepcopy(agent).to(args.device)
     agent_mle.actor_logstd.requires_grad = False
     optimizer_mle = optim.Adam(agent_mle.parameters(), lr=args.se_lr)
 
     obs_dim = obs.shape[-1]
     action_dim = actions.shape[-1]
 
-    b_obs = obs.reshape(-1, obs_dim)
-    b_actions = actions.reshape(-1, action_dim)
+    b_obs = obs.reshape(-1, obs_dim).to(args.device)
+    b_actions = actions.reshape(-1, action_dim).to(args.device)
 
     n = len(b_obs)
     b_inds = np.arange(n)
