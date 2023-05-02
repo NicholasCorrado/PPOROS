@@ -72,7 +72,10 @@ def parse_args():
     parser.add_argument("--ros-num-actions", type=int, default=0, help="the target KL divergence threshold")
     parser.add_argument("--ros-lambda", type=float, default=0.0, help="the target KL divergence threshold")
     parser.add_argument("--ros-uniform-sampling", type=bool, default=False, help="the target KL divergence threshold")
-    parser.add_argument("--compute-sampling-error", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--se", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--se-lr", type=int, default=5e-3)
+    parser.add_argument("--se-epochs", type=int, default=10000)
+
     parser.add_argument("--ros-eval", type=int, default=False)
 
     parser.add_argument("--log-stats", type=int, default=1)
@@ -535,9 +538,10 @@ def normalize_reward(return_rms, rewards):
     """Normalizes the rewards with the running mean rewards and their variance."""
     return rewards / np.sqrt(return_rms.var + 1e-8)
 
-def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step):
+def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step):
     agent_mle = copy.deepcopy(agent)
-    optimizer_mle = optim.Adam(agent_mle.parameters(), lr=3e-5)
+    agent_mle.actor_logstd.requires_grad = False
+    optimizer_mle = optim.Adam(agent_mle.parameters(), lr=args.se_lr)
 
     obs_dim = obs.shape[-1]
     action_dim = actions.shape[-1]
@@ -549,7 +553,7 @@ def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_
     b_inds = np.arange(n)
 
     mb_size = 256
-    for epoch in range(2000):
+    for epoch in range(args.se_epochs):
         np.random.shuffle(b_inds)
         for start in range(0, n, mb_size):
             end = start + mb_size
@@ -560,9 +564,22 @@ def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_
 
             optimizer_mle.zero_grad()
             loss.backward()
+
+            # grad_norm = nn.utils.clip_grad_norm_(agent_mle.parameters(), 1000)
+
             optimizer_mle.step()
-        # if epoch % 200 == 0:
+
+        # if epoch % 50 == 0:
+        #     print(epoch, grad_norm)
+        #
+        # if epoch % 500 == 0:
+        #     _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions)
         #     print(epoch, loss.item())
+        #     _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions)
+        #     logratio = logprobs_mle - logprobs_target
+        #     ratio = logratio.exp()
+        #     approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+        #     print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
 
     _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions)
 
@@ -572,8 +589,8 @@ def compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_
         ratio = logratio.exp()
         approx_kl_mle_target = ((ratio - 1) - logratio).mean()
         print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
-        _, _, _, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions)
 
+        _, _, _, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions)
         logratio = logprobs_ros - logprobs_target
         ratio = logratio.exp()
         approx_kl_ros_target = ((ratio - 1) - logratio).mean()
@@ -742,8 +759,8 @@ def main():
         env_obs_normalize.set_update(True)
 
         if global_step % (args.num_steps*args.se_freq) == 0:
-            if args.compute_sampling_error:
-                compute_sampling_error(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
+            if args.se:
+                compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
 
         # means, stds = None, None
         # if global_step % args.num_steps == 0 or global_step <= args.ros_num_steps:
