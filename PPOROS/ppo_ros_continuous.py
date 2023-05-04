@@ -73,19 +73,21 @@ def parse_args():
     parser.add_argument("--ros-lambda", type=float, default=0.0, help="the target KL divergence threshold")
     parser.add_argument("--ros-uniform-sampling", type=bool, default=False, help="the target KL divergence threshold")
     parser.add_argument("--ros-adv", type=bool, default=False, help="the target KL divergence threshold")
-    parser.add_argument("--se", type=int, default=False, help="True = use ROS policy to collect data, False = use target policy")
-    parser.add_argument("--se-lr", type=float, default=5e-3)
-    parser.add_argument("--se-epochs", type=int, default=2000)
     parser.add_argument("--ros-eval", type=int, default=False)
 
     parser.add_argument("--log-stats", type=int, default=1)
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
-    parser.add_argument("--se-freq", type=int, default=10, help="")
     parser.add_argument("--eval-episodes", type=int, default=20, help="number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="directory in which results will be saved")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="results will be saved to <results_dir>/<env_id>/<subdir>/")
     parser.add_argument("--policy-path", type=str, default=None, help="Path to pretrained policy")
     parser.add_argument("--normalization-dir", type=str, default=None, help="Directory contatining normalization stats")
+
+    parser.add_argument("--se", type=int, default=0)
+    parser.add_argument("--se-lr", type=float, default=1e-3)
+    parser.add_argument("--se-epochs", type=int, default=10000)
+    parser.add_argument("--se-n", type=int, default=50000)
+    parser.add_argument("--se-freq", type=int, default=10, help="")
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -196,7 +198,7 @@ class Agent(nn.Module):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         if clamp:
-            action_logstd = torch.clamp(action_logstd, min=-4, max=1)
+            action_logstd = torch.clamp(action_logstd, min=-3, max=1)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         if action is None:
@@ -553,9 +555,101 @@ def normalize_reward(return_rms, rewards):
     """Normalizes the rewards with the running mean rewards and their variance."""
     return rewards / np.sqrt(return_rms.var + 1e-8)
 
+def oracle_grad(args, agent, envs):
+
+    envs_se = copy.deepcopy(envs)
+    agent_se = copy.deepcopy(agent)
+    optimizer_se = optim.Adam(agent_se.parameters(), lr=args.se_lr)
+
+    obs_buffer = torch.zeros((args.se_n, args.num_envs) + envs_se.single_observation_space.shape).to(args.device)
+    actions_buffer = torch.zeros((args.se_n, args.num_envs) + envs_se.single_action_space.shape).to(args.device)
+    rewards_buffer = torch.zeros((args.se_n, args.num_envs)).to(args.device)
+    dones_buffer = torch.zeros((args.se_n, args.num_envs)).to(args.device)
+    buffer_pos = 0 # index of buffer position to be updated in the current timestep
+
+    next_obs, _ = envs_se.reset(seed=args.seed)
+    next_obs = torch.Tensor(next_obs).to(args.device)
+    next_done = torch.zeros(args.num_envs).to(args.device)
+
+    env_reward_normalize = envs.envs[0].env
+    env_obs_normalize = envs.envs[0].env.env.env
+
+    env_obs_normalize.set_update(False)
+    env_reward_normalize.set_update(False)
+
+    for t in range(1, args.se_n+1):
+        if (t) % 10000 == 0: print(t)
+        # obs_buffer[buffer_pos] = env_obs_normalize.unnormalize(next_obs)  # store unnormalized obs
+        obs_buffer[buffer_pos] = next_obs # store normalize obs
+        dones_buffer[buffer_pos] = next_done
+
+        with torch.no_grad():
+            action, action_mean, action_std, _, _, _ = agent_se.get_action_and_value(next_obs)
+            actions_buffer[buffer_pos] = action
+
+        next_obs, reward, terminated, truncated, infos = envs_se.step(action.cpu().numpy())
+        done = np.logical_or(terminated, truncated)
+        rewards_buffer[buffer_pos] = torch.tensor(reward).to(args.device).view(-1) # store normalized reward
+        next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(done).to(args.device)
+
+        buffer_pos += 1
+
+    obs_dim = obs_buffer.shape[-1]
+    action_dim = actions_buffer.shape[-1]
+
+    _, means, stds, new_logprob, _, new_value = agent_se.get_action_and_value(obs_buffer.reshape(-1, obs_dim), actions_buffer.reshape(-1, action_dim))
+    values = new_value
+    logprobs = new_logprob.reshape(-1, 1)
+
+    with torch.no_grad():
+
+        # next_value = agent_se.get_value(normalize_obs(obs_rms, next_obs)).reshape(1, -1)
+        next_value = agent_se.get_value(next_obs).reshape(1, -1)
+        advantages = torch.zeros_like(rewards_buffer).to(args.device)
+        lastgaelam = 0
+        num_steps = args.se_n
+        for t in reversed(range(num_steps)):
+            if t == num_steps - 1:
+                nextnonterminal = 1.0 - next_done
+                nextvalues = next_value
+            else:
+                nextnonterminal = 1.0 - dones_buffer[t + 1]
+                nextvalues = values[t + 1]
+            delta = rewards_buffer[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+            advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+        returns = advantages + values
+
+    pg_loss = -(advantages * logprobs).mean()
+
+    optimizer_se.zero_grad()
+    pg_loss.backward()
+
+    grads = [p.grad.reshape(-1) for p in agent_se.parameters() if p.grad is not None and p.requires_grad]
+    grads = torch.concat(grads)
+    return grads
+
+def empirical_grad(args, agent, obs, actions, advantages):
+    agent_se = copy.deepcopy(agent)
+    optimizer_se = optim.Adam(agent_se.parameters(), lr=args.se_lr)
+
+    obs_dim = obs.shape[-1]
+    action_dim = actions.shape[-1]
+
+    _, means, stds, new_logprob, _, _ = agent_se.get_action_and_value(obs.reshape(-1, obs_dim), actions.reshape(-1, action_dim))
+    logprobs = new_logprob.reshape(-1, 1)
+
+    pg_loss = -(advantages * logprobs).mean()
+
+    optimizer_se.zero_grad()
+    pg_loss.backward()
+
+    grads = [p.grad.reshape(-1) for p in agent_se.parameters() if p.grad is not None and p.requires_grad]
+    grads = torch.concat(grads)
+    return grads
+
 def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step):
     agent_mle = copy.deepcopy(agent).to(args.device)
-    # agent_mle.actor_logstd.requires_grad = False
+    agent_mle.actor_logstd.requires_grad = False
     optimizer_mle = optim.Adam(agent_mle.parameters(), lr=args.se_lr)
 
     obs_dim = obs.shape[-1]
@@ -569,6 +663,14 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
 
     mb_size = 256
     for epoch in range(args.se_epochs):
+
+        frac = 1.0 - epoch / args.se_epochs
+        lrnow = frac * args.se_lr
+        if lrnow < 1e-5:
+            lrnow = 1e-5
+        optimizer_mle.param_groups[0]["lr"] = lrnow
+
+
         np.random.shuffle(b_inds)
         for start in range(0, n, mb_size):
             end = start + mb_size
@@ -580,22 +682,25 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
             optimizer_mle.zero_grad()
             loss.backward()
 
-            # grad_norm = nn.utils.clip_grad_norm_(agent_mle.parameters(), 0.5)
+            grad_norm = nn.utils.clip_grad_norm_(agent_mle.parameters(), 100, norm_type=1)
 
             optimizer_mle.step()
 
-        # if epoch % 50 == 0:
-        #     print(epoch, grad_norm)
-        #
-        # if epoch % 500 == 0:
-        #     _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
-        #     print(epoch, loss.item())
-        #     _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
-        #     logratio = logprobs_mle - logprobs_target
-        #     ratio = logratio.exp()
-        #     approx_kl_mle_target = ((ratio - 1) - logratio).mean()
-        #     print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
-        #
+            if grad_norm < 0.01: break;
+
+        if epoch % 50 == 0:
+            print('epoch:', epoch)
+            print('grad norm:', grad_norm)
+            print('loss:', loss.item())
+
+            _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
+            _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
+            logratio = logprobs_mle - logprobs_target
+            approx_kl_mle_target = logratio.mean()
+            # ratio = logratio.exp()
+            # approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+            print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
+
 
     with torch.no_grad():
         _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
@@ -603,13 +708,15 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
         _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
         logratio = logprobs_mle - logprobs_target
         ratio = logratio.exp()
-        approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+        approx_kl_mle_target = logratio.mean()
+        # approx_kl_mle_target = ((ratio - 1) - logratio).mean()
         print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
 
         _, _, _, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions, clamp=True)
         logratio = logprobs_ros - logprobs_target
         ratio = logratio.exp()
-        approx_kl_ros_target = ((ratio - 1) - logratio).mean()
+        approx_kl_ros_target = logratio.mean()
+        # approx_kl_ros_target = ((ratio - 1) - logratio).mean()
         print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
 
         sampling_error_logs['kl_mle_target'].append(approx_kl_mle_target.item())
@@ -770,13 +877,9 @@ def main():
         obs = obs.to(args.device)
         env_obs_normalize.set_update(True)
 
-        env_obs_normalize.set_update(False)
+        env_reward_normalize.set_update(False)
         rewards = env_reward_normalize.normalize(rewards).float()
-        env_obs_normalize.set_update(True)
-
-        if global_step % (args.num_steps*args.se_freq) == 0:
-            if args.se:
-                compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
+        env_reward_normalize.set_update(True)
 
         # means, stds = None, None
         # if global_step % args.num_steps == 0 or global_step <= args.ros_num_steps:
@@ -787,7 +890,36 @@ def main():
             logprobs = new_logprob.reshape(-1, 1)
 
             # print(stds.mean(axis=0))
+        if global_step % (args.num_steps*args.se_freq) == 0:
+            if args.se:
+                compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
+                # with torch.no_grad():
+                #     # next_value = agent.get_value(normalize_obs(obs_rms, next_obs)).reshape(1, -1)
+                #     next_value = agent.get_value(next_obs).reshape(1, -1)
+                #     advantages = torch.zeros_like(rewards).to(args.device)
+                #     lastgaelam = 0
+                #     num_steps = indices.shape[0]
+                #     for t in reversed(range(num_steps)):
+                #         if t == num_steps - 1:
+                #             nextnonterminal = 1.0 - next_done
+                #             nextvalues = next_value
+                #         else:
+                #             nextnonterminal = 1.0 - dones[t + 1]
+                #             nextvalues = values[t + 1]
+                #         delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                #         advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                #     returns = advantages + values
+                #
+                # o_grad = oracle_grad(args=args, agent=agent, envs=envs)
+                # e_grad = empirical_grad(args=args, agent=agent, obs=obs, actions=actions, advantages=advantages)
+                # with torch.no_grad():
+                #     o_grad /= o_grad.norm()
+                #     e_grad /= e_grad.norm()
+                #
+                #     se = torch.dot(o_grad, e_grad)
+                # print(se)
 
+        advantages = None
         if (global_step % args.num_steps == 0 or args.ros_adv) and args.update_epochs > 0:
             # Compute returns and advantages -- bootstrap value if not done
             # Do this every PPO update or every ROS update if ros_adv == True
