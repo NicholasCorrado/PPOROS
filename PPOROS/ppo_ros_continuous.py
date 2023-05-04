@@ -661,13 +661,11 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
     n = len(b_obs)
     b_inds = np.arange(n)
 
-    mb_size = 256
+    mb_size = 64
     for epoch in range(args.se_epochs):
 
         frac = 1.0 - epoch / args.se_epochs
         lrnow = frac * args.se_lr
-        if lrnow < 1e-5:
-            lrnow = 1e-5
         optimizer_mle.param_groups[0]["lr"] = lrnow
 
 
@@ -682,7 +680,7 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
             optimizer_mle.zero_grad()
             loss.backward()
 
-            grad_norm = nn.utils.clip_grad_norm_(agent_mle.parameters(), 100, norm_type=1)
+            grad_norm = nn.utils.clip_grad_norm_(agent_mle.parameters(), 1, norm_type=2)
 
             optimizer_mle.step()
 
@@ -696,9 +694,9 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
             _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
             _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
             logratio = logprobs_mle - logprobs_target
-            approx_kl_mle_target = logratio.mean()
-            # ratio = logratio.exp()
-            # approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+            # approx_kl_mle_target = logratio.mean()
+            ratio = logratio.exp()
+            approx_kl_mle_target = ((ratio - 1) - logratio).mean()
             print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
 
 
@@ -708,15 +706,15 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
         _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
         logratio = logprobs_mle - logprobs_target
         ratio = logratio.exp()
-        approx_kl_mle_target = logratio.mean()
-        # approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+        # approx_kl_mle_target = logratio.mean()
+        approx_kl_mle_target = ((ratio - 1) - logratio).mean()
         print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
 
         _, _, _, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions, clamp=True)
         logratio = logprobs_ros - logprobs_target
         ratio = logratio.exp()
-        approx_kl_ros_target = logratio.mean()
-        # approx_kl_ros_target = ((ratio - 1) - logratio).mean()
+        # approx_kl_ros_target = logratio.mean()
+        approx_kl_ros_target = ((ratio - 1) - logratio).mean()
         print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
 
         sampling_error_logs['kl_mle_target'].append(approx_kl_mle_target.item())
