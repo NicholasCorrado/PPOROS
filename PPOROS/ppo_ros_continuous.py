@@ -88,6 +88,7 @@ def parse_args():
     parser.add_argument("--se-epochs", type=int, default=10000)
     parser.add_argument("--se-n", type=int, default=50000)
     parser.add_argument("--se-freq", type=int, default=10, help="")
+    parser.add_argument("--se-verbose", type=int, default=0)
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -686,7 +687,7 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
 
             if grad_norm < 0.01: break;
 
-        if epoch % 50 == 0:
+        if args.se_verbose and epoch % 50 == 0:
             print('epoch:', epoch)
             print('grad norm:', grad_norm)
             print('loss:', loss.item())
