@@ -651,6 +651,10 @@ def empirical_grad(args, agent, obs, actions, advantages):
 def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step):
     agent_mle = copy.deepcopy(agent).to(args.device)
     agent_mle.actor_logstd.requires_grad = False
+    params = [p for p in agent_mle.actor_mean.parameters()]
+    params[0].requires_grad = False
+    params[2].requires_grad = False
+
     optimizer_mle = optim.Adam(agent_mle.parameters(), lr=args.se_lr)
 
     obs_dim = obs.shape[-1]
@@ -662,13 +666,12 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
     n = len(b_obs)
     b_inds = np.arange(n)
 
-    mb_size = 64
+    mb_size = 512 * b_obs.shape[0] // args.num_steps
     for epoch in range(args.se_epochs):
 
-        frac = 1.0 - epoch / args.se_epochs
-        lrnow = frac * args.se_lr
-        optimizer_mle.param_groups[0]["lr"] = lrnow
-
+        # frac = 1.0 - epoch / args.se_epochs
+        # lrnow = frac * args.se_lr
+        # optimizer_mle.param_groups[0]["lr"] = lrnow
 
         np.random.shuffle(b_inds)
         for start in range(0, n, mb_size):
@@ -685,9 +688,7 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
 
             optimizer_mle.step()
 
-            if grad_norm < 0.01: break;
-
-        if args.se_verbose and epoch % 50 == 0:
+        if args.se_verbose and epoch % 500 == 0:
             print('epoch:', epoch)
             print('grad norm:', grad_norm)
             print('loss:', loss.item())
