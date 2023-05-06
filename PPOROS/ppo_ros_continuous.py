@@ -85,7 +85,7 @@ def parse_args():
 
     parser.add_argument("--se", type=int, default=0)
     parser.add_argument("--se-lr", type=float, default=1e-3)
-    parser.add_argument("--se-epochs", type=int, default=10000)
+    parser.add_argument("--se-epochs", type=int, default=1000)
     parser.add_argument("--se-n", type=int, default=50000)
     parser.add_argument("--se-freq", type=int, default=10, help="")
     parser.add_argument("--se-verbose", type=int, default=0)
@@ -419,8 +419,6 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, ad
     b_obs = obs[start:end].reshape((-1,) + envs.single_observation_space.shape)
     b_logprobs = logprobs[start:end].reshape(-1)
     b_actions = actions[start:end].reshape((-1,) + envs.single_action_space.shape)
-    if args.ros_adv:
-        b_abs_advantages = advantages[start:end].reshape(-1)
     means = means[start:end]
     stds = stds[start:end]
     # action_means = agent_ros.actor_mean(b_obs)
@@ -481,19 +479,8 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, ad
                 pushup_loss = (torch.log(sigma2/sigma1) + (sigma1**2 + (mu1-mu2)**2)/(2*sigma2**2) - 0.5).mean()
 
 
-            if args.ros_adv:
-                mb_abs_advantages = 1/b_abs_advantages[mb_inds]
-                if args.norm_adv:
-                    mb_abs_advantages = (mb_abs_advantages - mb_abs_advantages.mean()) / (mb_abs_advantages.std() + 1e-8)
-
-                mask = mb_abs_advantages > 0
-                mb_abs_advantages[mask] = 0
-
-                pg_loss1 = (1 - mb_abs_advantages) * ros_ratio
-                pg_loss2 = (1 - mb_abs_advantages) * torch.clamp(ros_ratio, 1 - args.ros_clip_coef, 1 + args.ros_clip_coef)
-            else:
-                pg_loss1 = ros_ratio
-                pg_loss2 = torch.clamp(ros_ratio, 1 - args.ros_clip_coef, 1 + args.ros_clip_coef)
+            pg_loss1 = ros_ratio
+            pg_loss2 = torch.clamp(ros_ratio, 1 - args.ros_clip_coef, 1 + args.ros_clip_coef)
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             entropy_loss = entropy.mean()
@@ -688,7 +675,8 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
 
             optimizer_mle.step()
 
-        if args.se_verbose and epoch % 500 == 0:
+        if args.se_verbose and epoch % 50 == 0:
+
             print('epoch:', epoch)
             print('grad norm:', grad_norm)
             print('loss:', loss.item())
@@ -890,41 +878,12 @@ def main():
             values = new_value
             logprobs = new_logprob.reshape(-1, 1)
 
-            # print(stds.mean(axis=0))
         if global_step % (args.num_steps*args.se_freq) == 0:
             if args.se:
                 compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
-                # with torch.no_grad():
-                #     # next_value = agent.get_value(normalize_obs(obs_rms, next_obs)).reshape(1, -1)
-                #     next_value = agent.get_value(next_obs).reshape(1, -1)
-                #     advantages = torch.zeros_like(rewards).to(args.device)
-                #     lastgaelam = 0
-                #     num_steps = indices.shape[0]
-                #     for t in reversed(range(num_steps)):
-                #         if t == num_steps - 1:
-                #             nextnonterminal = 1.0 - next_done
-                #             nextvalues = next_value
-                #         else:
-                #             nextnonterminal = 1.0 - dones[t + 1]
-                #             nextvalues = values[t + 1]
-                #         delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                #         advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-                #     returns = advantages + values
-                #
-                # o_grad = oracle_grad(args=args, agent=agent, envs=envs)
-                # e_grad = empirical_grad(args=args, agent=agent, obs=obs, actions=actions, advantages=advantages)
-                # with torch.no_grad():
-                #     o_grad /= o_grad.norm()
-                #     e_grad /= e_grad.norm()
-                #
-                #     se = torch.dot(o_grad, e_grad)
-                # print(se)
 
         advantages = None
-        if (global_step % args.num_steps == 0 or args.ros_adv) and args.update_epochs > 0:
-            # Compute returns and advantages -- bootstrap value if not done
-            # Do this every PPO update or every ROS update if ros_adv == True
-
+        if global_step % args.num_steps == 0 and args.update_epochs > 0:
             with torch.no_grad():
                 # next_value = agent.get_value(normalize_obs(obs_rms, next_obs)).reshape(1, -1)
                 next_value = agent.get_value(next_obs).reshape(1, -1)
@@ -942,7 +901,6 @@ def main():
                     advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
                 returns = advantages + values
 
-        if global_step % args.num_steps == 0 and args.update_epochs > 0:
             target_update += 1
 
             # Annealing learning rate
