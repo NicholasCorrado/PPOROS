@@ -58,6 +58,7 @@ def parse_args():
     parser.add_argument("--target-kl", type=float, default=0.03, help="the target KL divergence threshold")
     parser.add_argument("--prob-threshold", type=float, default=None, help="")
     parser.add_argument("--ros", type=int, default=1, help="True = use ROS policy to collect data, False = use target policy")
+    parser.add_argument("--ros-vanilla", type=int, default=0, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-num-steps", type=int, default=1024, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--ros-learning-rate", "-ros-lr", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--ros-anneal-lr", type=lambda x: bool(strtobool(x)), default=0, nargs="?", const=False, help="Toggle learning rate annealing for policy and value networks")
@@ -482,6 +483,9 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, ad
             pg_loss1 = ros_ratio
             pg_loss2 = torch.clamp(ros_ratio, 1 - args.ros_clip_coef, 1 + args.ros_clip_coef)
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+            if args.ros_vanilla:
+                pg_loss = -ros_logratio.mean()
 
             entropy_loss = entropy.mean()
             loss = pg_loss + args.ros_lambda*pushup_loss #- args.ros_ent_coef * entropy_loss
