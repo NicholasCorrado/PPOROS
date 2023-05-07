@@ -108,6 +108,8 @@ def parse_args():
 
     if args.ros:
         save_dir = f"{args.results_dir}/{args.env_id}/ppo_ros/{args.results_subdir}"
+        if args.ros_vanilla:
+            save_dir = f"{args.results_dir}/{args.env_id}/ros/{args.results_subdir}"
     else:
         save_dir = f"{args.results_dir}/{args.env_id}/ppo_buffer/{args.results_subdir}"
 
