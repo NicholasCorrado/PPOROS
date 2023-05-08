@@ -927,9 +927,8 @@ def main():
                 ros_optimizer.param_groups[0]["lr"] = lrnow
 
             # Set ROS policy equal to current target policy
-            if not args.ros_vanilla:
-                for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
-                    source_param.data.copy_(dump_param.data)
+            for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
+                source_param.data.copy_(dump_param.data)
 
             # perform ROS behavior update and log stats
             ros_stats = update_ros(
