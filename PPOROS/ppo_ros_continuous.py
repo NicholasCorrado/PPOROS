@@ -5,7 +5,7 @@ import os
 import pickle
 import random
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from distutils.util import strtobool
 
 import gymnasium as gym
@@ -59,6 +59,7 @@ def parse_args():
     parser.add_argument("--prob-threshold", type=float, default=None, help="")
     parser.add_argument("--ros", type=int, default=1, help="True = use ROS policy to collect data, False = use target policy")
     parser.add_argument("--ros-vanilla", type=int, default=0, help="True = use ROS policy to collect data, False = use target policy")
+    # parser.add_argument("--ros-reference", type=int, default=1)
     parser.add_argument("--ros-num-steps", type=int, default=1024, help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--ros-learning-rate", "-ros-lr", type=float, default=1e-4, help="the learning rate of the ROS optimizer")
     parser.add_argument("--ros-anneal-lr", type=lambda x: bool(strtobool(x)), default=0, nargs="?", const=False, help="Toggle learning rate annealing for policy and value networks")
@@ -641,7 +642,7 @@ def empirical_grad(args, agent, obs, actions, advantages):
     grads = torch.concat(grads)
     return grads
 
-def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step):
+def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step, prefix=""):
     agent_mle = copy.deepcopy(agent).to(args.device)
     agent_mle.actor_logstd.requires_grad = False
     params = [p for p in agent_mle.actor_mean.parameters()]
@@ -714,14 +715,88 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
         print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
         print('')
 
-        sampling_error_logs['kl_mle_target'].append(approx_kl_mle_target.item())
-        sampling_error_logs['kl_ros_target'].append(approx_kl_ros_target.item())
-        sampling_error_logs['ent_target'].append(ent_target.mean().item())
-        sampling_error_logs['ent_ros'].append(ent_ros.mean().item())
+        sampling_error_logs[f'{prefix}kl_mle_target'].append(approx_kl_mle_target.item())
+        sampling_error_logs[f'{prefix}kl_ros_target'].append(approx_kl_ros_target.item())
+        sampling_error_logs[f'{prefix}ent_target'].append(ent_target.mean().item())
+        sampling_error_logs[f'{prefix}ent_ros'].append(ent_ros.mean().item())
         sampling_error_logs['t'].append(global_step)
 
         np.savez(f'{args.save_dir}/stats.npz',
                  **sampling_error_logs)
+
+# def reference(args, agent, agent_ros,
+#               ref_envs, ref_obs_buffer, ref_actions_buffer, ref_rewards_buffer, ref_dones_buffer, ref_next_obs,
+#               sampling_error_logs, global_step):
+#     num_ros_updates = args.buffer_size//args.ros_num_steps - 1
+#     buffer_pos = 0
+#
+#     # next_obs, _ = ref_envs.reset(seed=args.seed)
+#     # next_obs = torch.Tensor(next_obs).to(args.device)
+#
+#     for ros_update in range(1, num_ros_updates + 1):
+#         for source_param, dump_param in zip(agent_ros.parameters(), agent.parameters()):
+#             source_param.data.copy_(dump_param.data)
+#
+#         for step in range(0, args.ros_num_steps):
+#             ref_obs_buffer[buffer_pos] = next_obs # store unnormalized obs
+#
+#             with torch.no_grad():
+#                 action, action_mean, action_std, logprob_ros, entropy, _ = agent_ros.get_action_and_value(next_obs)
+#                 ref_actions_buffer[buffer_pos] = action
+#
+#             next_obs, reward, terminated, truncated, infos = ref_envs.step(action.cpu().numpy())
+#             next_obs = torch.Tensor(next_obs).to(args.device)
+#             ref_rewards_buffer[buffer_pos] = torch.tensor(reward).to(args.device).view(-1)
+#             next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(done).to(args.device)
+#
+#             buffer_pos += 1
+#             buffer_pos %= args.buffer_size
+#
+#             # Only print when at least 1 env is done
+#             if "final_info" not in infos:
+#                 continue
+#             for info in infos["final_info"]:
+#                 # Skip the envs that are not done
+#                 if info is None:
+#                     continue
+#
+#     compute_se(args, agent, agent_ros, ref_obs_buffer, ref_actions_buffer, sampling_error_logs, global_step)
+
+
+def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step):
+
+    envs_se = copy.deepcopy(envs)
+
+    obs_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs_se.single_observation_space.shape).to(args.device)
+    actions_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs_se.single_action_space.shape).to(args.device)
+    buffer_pos = 0 # index of buffer position to be updated in the current timestep
+
+    env_reward_normalize = envs_se.envs[0].env
+    env_obs_normalize = envs_se.envs[0].env.env.env
+
+    env_obs_normalize.set_update(False)
+    env_reward_normalize.set_update(False)
+
+
+    for i in range(len(agent_buffer)):
+        agent = agent_buffer[i]
+        next_obs = next_obs_buffer[i]
+
+        for t in range(args.num_steps):
+            obs_buffer[buffer_pos] = next_obs # store normalized obs
+
+            with torch.no_grad():
+                action, action_mean, action_std, _, _, _ = agent.get_action_and_value(next_obs)
+                actions_buffer[buffer_pos] = action
+
+            next_obs, reward, terminated, truncated, infos = envs_se.step(action.cpu().numpy())
+            next_obs = torch.Tensor(next_obs).to(args.device)
+
+            buffer_pos += 1
+
+    compute_se(args, agent_buffer[-1], agent_buffer[-1], obs_buffer, actions_buffer, sampling_error_logs, global_step, prefix="ref_")
+
+
 
 def main():
     args = parse_args()
@@ -802,6 +877,19 @@ def main():
     num_updates = args.total_timesteps // args.batch_size
     # There are (ppo num updates)/(ros num updates) times as many ROS updates.
     num_ros_updates = num_updates * (args.num_steps//args.ros_num_steps)
+
+    # ref_obs_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs.single_observation_space.shape).to(args.device)
+    # ref_actions_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs.single_action_space.shape).to(args.device)
+    # ref_rewards_buffer = torch.zeros((args.buffer_size, args.num_envs)).to(args.device)
+    # ref_dones_buffer = torch.zeros((args.buffer_size, args.num_envs)).to(args.device)
+    # ref_envs = copy.deepcopy(envs) # we will make sure this env always matches the training env at the start of each ppo update.
+    # ref_agent = copy.deepcopy(agent) # we will make sure this agent always matches the target agent at the start of each ppo update.
+    # ref_next_obs = copy.deepcopy(next_obs)
+    # ref_next_done = copy.deepcopy(next_done)
+    agent_buffer = deque(maxlen=args.buffer_batches)
+    agent_buffer.append(agent)
+    next_obs_buffer = deque(maxlen=args.buffer_batches)
+    agent_buffer.append(next_obs)
 
     # logging
     ppo_logs = defaultdict(lambda: [])
@@ -886,10 +974,23 @@ def main():
 
         if global_step % (args.num_steps*args.se_freq) == 0:
             if args.se:
+                print('se')
                 compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
+                compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
+                # if args.ros_reference:
+                #     reference(args, ref_agent, agent_ros, ref_envs, ref_obs_buffer, ref_actions_buffer, sampling_error_logs, global_step, ref_next_obs)
+                # else:
+                #     compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
+                
 
         advantages = None
         if global_step % args.num_steps == 0 and args.update_epochs > 0:
+            # ref_envs = copy.deepcopy(envs) # update reference env
+            next_obs_buffer.append(copy.deepcopy(next_obs))
+            # ref_next_done = copy.deepcopy(next_done)
+            # ref_agent = copy.deepcopy(agent) # update reference env
+            agent_buffer.append(copy.deepcopy(agent))
+
             with torch.no_grad():
                 # next_value = agent.get_value(normalize_obs(obs_rms, next_obs)).reshape(1, -1)
                 next_value = agent.get_value(next_obs).reshape(1, -1)
@@ -977,6 +1078,48 @@ def main():
                 writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
                 if args.ros_eval:
                     writer.add_scalar("charts/ros_eval_return", ros_ret, global_step)
+
+
+        ################################################################################################################
+        # if global_step % args.buffer_size == 0:
+        #     # buffer is full
+        #     ref_buffer_pos = 0
+        #     while ref_buffer_pos < args.buffer_size:
+        #         for ref_step in range(0, args.ros_num_steps):
+        #             ref_obs_buffer[buffer_pos] = ref_next_obs
+        #             ref_dones_buffer[buffer_pos] = ref_next_done
+        #
+        #             with torch.no_grad():
+        #                 if args.ros and np.random.random() < args.ros_mixture_prob:
+        #                     action, action_mean, action_std, logprob_ros, entropy, _ = agent_ros.get_action_and_value(
+        #                         next_obs)
+        #                     if args.track:
+        #                         writer.add_scalar("ros/action_mean", action_mean.detach().mean().item(), global_step)
+        #                         writer.add_scalar("ros/action_std", action_std.detach().mean().item(), global_step)
+        #                 else:
+        #                     action, action_mean, action_std, _, _, _ = agent.get_action_and_value(next_obs)
+        #                 actions_buffer[buffer_pos] = action
+        #
+        #             next_obs, reward, terminated, truncated, infos = envs.step(action.cpu().numpy())
+        #             done = np.logical_or(terminated, truncated)
+        #             reward = env_reward_normalize.unnormalize(reward)
+        #             rewards_buffer[buffer_pos] = torch.tensor(reward).to(args.device).view(-1)
+        #             next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(done).to(args.device)
+        #
+        #             buffer_pos += 1
+        #             buffer_pos %= args.buffer_size
+        #
+        #             # Only print when at least 1 env is done
+        #             if "final_info" not in infos:
+        #                 continue
+        #             for info in infos["final_info"]:
+        #                 # Skip the envs that are not done
+        #                 if info is None:
+        #                     continue
+        #
+        #                 if args.track:
+        #                     writer.add_scalar("charts/ros_train_ret", info["episode"]["r"], global_step)
+        #                     writer.add_scalar("charts/episode_length", info["episode"]["l"], global_step)
 
     envs.close()
 
