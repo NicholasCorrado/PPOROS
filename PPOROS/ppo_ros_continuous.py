@@ -668,9 +668,9 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
             _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=False)
             _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=False)
             logratio = logprobs_mle - logprobs_target
-            # approx_kl_mle_target = logratio.mean()
             ratio = logratio.exp()
-            approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+            approx_kl_mle_target = logratio.mean()
+            # approx_kl_mle_target = ((ratio - 1) - logratio).mean()
             print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
 
 
@@ -682,15 +682,15 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
         _, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=False)
         logratio = logprobs_mle - logprobs_target
         ratio = logratio.exp()
-        # approx_kl_mle_target = logratio.mean()
-        approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+        approx_kl_mle_target = logratio.mean()
+        # approx_kl_mle_target = ((ratio - 1) - logratio).mean()
         # print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
 
         _, mean_ros, std_ros, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions, clamp=False)
         logratio = logprobs_ros - logprobs_target
         ratio = logratio.exp()
-        # approx_kl_ros_target = logratio.mean()
-        approx_kl_ros_target = ((ratio - 1) - logratio).mean()
+        approx_kl_ros_target = logratio.mean()
+        # approx_kl_ros_target = ((ratio - 1) - logratio).mean()
         # print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
         # print('ros-mle std:',torch.abs(std_ros-std_mle).mean())
         # print('target-mle std:', torch.abs(std_target-std_mle).mean())
