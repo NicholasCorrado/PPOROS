@@ -865,7 +865,7 @@ def main():
     next_done = torch.zeros(args.num_envs).to(args.device)
     num_updates = args.total_timesteps // args.batch_size
     if args.se_freq is None:
-        args.se_freq = num_updates // 50
+        args.se_freq = num_updates // 30
     # There are (ppo num updates)/(ros num updates) times as many ROS updates.
     num_ros_updates = num_updates * (args.num_steps//args.ros_num_steps)
 
