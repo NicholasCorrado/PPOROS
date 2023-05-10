@@ -684,14 +684,14 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
         ratio = logratio.exp()
         # approx_kl_mle_target = logratio.mean()
         approx_kl_mle_target = ((ratio - 1) - logratio).mean()
-        print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
+        # print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
 
         _, mean_ros, std_ros, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions, clamp=False)
         logratio = logprobs_ros - logprobs_target
         ratio = logratio.exp()
         # approx_kl_ros_target = logratio.mean()
         approx_kl_ros_target = ((ratio - 1) - logratio).mean()
-        print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
+        # print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
         # print('ros-mle std:',torch.abs(std_ros-std_mle).mean())
         # print('target-mle std:', torch.abs(std_target-std_mle).mean())
         # print('ros-target std:', torch.abs(std_ros-std_target).mean())
@@ -969,6 +969,10 @@ def main():
                 compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
                 compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
                 sampling_error_logs[f'diff_kl_mle_target'].append(sampling_error_logs[f'kl_mle_target'][-1]-sampling_error_logs[f'ref_kl_mle_target'][-1])
+
+                np.savez(f'{args.save_dir}/stats.npz',
+                         **sampling_error_logs)
+
                 if args.track:
                     writer.add_scalar("charts/diff_kl_mle_target", sampling_error_logs[f'diff_kl_mle_target'][-1], global_step)
 
