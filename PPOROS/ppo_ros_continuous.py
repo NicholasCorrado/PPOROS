@@ -65,7 +65,7 @@ def parse_args():
     parser.add_argument("--ros-anneal-lr", type=lambda x: bool(strtobool(x)), default=0, nargs="?", const=False, help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--ros-clip-coef", type=float, default=0.3, help="the surrogate clipping coefficient")
     parser.add_argument("--ros-max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
-    parser.add_argument("--ros-num-minibatches", type=int, default=32, help="the number of mini-batches")
+    parser.add_argument("--ros-num-minibatches", type=int, default=16, help="the number of mini-batches")
     parser.add_argument("--ros-update-epochs", type=int, default=16, help="the K epochs to update the policy")
     parser.add_argument("--ros-mixture-prob", type=float, default=1, help="Probability of sampling ROS policy")
     parser.add_argument("--ros-ent-coef", type=float, default=0.0, help="coefficient of the entropy in ros update")
@@ -89,7 +89,7 @@ def parse_args():
     parser.add_argument("--se-lr", type=float, default=1e-3)
     parser.add_argument("--se-epochs", type=int, default=1000)
     parser.add_argument("--se-n", type=int, default=50000)
-    parser.add_argument("--se-freq", type=int, default=10, help="")
+    parser.add_argument("--se-freq", type=int, default=None, help="")
     parser.add_argument("--se-verbose", type=int, default=0)
 
     args = parser.parse_args()
@@ -228,45 +228,6 @@ class Agent(nn.Module):
             probs = torch.distributions.Uniform(low=torch.clamp(action_mean-3*action_std,-1,+1), high=torch.clamp(action_mean+3*action_std,-1,+1))
             action = probs.sample()
         return action
-
-class AgentBeta(nn.Module):
-    def __init__(self, envs):
-        super().__init__()
-        self.critic = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 1), std=1.0),
-        )
-        self.net = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 2*np.prod(envs.single_action_space.shape)), std=0.01),
-        )
-        self.action_dim = envs.single_action_space.shape[0]
-
-    def get_value(self, x):
-        return self.critic(x)
-
-    def get_action_and_value(self, x, action=None):
-        net_output = self.net(x)
-        alpha = 2 + torch.exp(net_output[:, :self.action_dim])
-        beta = 2 + torch.exp(net_output[:, self.action_dim:])
-        # print(torch.mean(torch.norm(alpha, dim=-1)), torch.mean(torch.norm(beta, dim=-1)))
-        probs = Beta(alpha, beta)
-        if action is None:
-            action = probs.sample()
-        return action, alpha, beta, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
-
-    def get_action(self, x):
-        net_output = self.net(x)
-        alpha = 2 + torch.exp(net_output[:, :self.action_dim])
-        beta = 2 + torch.exp(net_output[:, self.action_dim:])
-        action_mean = alpha / (alpha+beta)
-        return action_mean
 
 def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
     # flatten the batch
@@ -437,6 +398,8 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, ad
         b_obs = b_obs[mask]
         b_logprobs = b_logprobs[mask]
         b_actions = b_actions[mask]
+        means = means[mask]
+        stds = stds[mask]
 
     batch_size = b_obs.shape[0]
     minibatch_size = min(args.ros_minibatch_size, batch_size)
@@ -532,7 +495,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, ad
             'ros_epochs': epoch + 1,
             'ros_clip_frac': float(np.mean(clipfracs)),
             'ros_grad_norm': float(np.mean(grad_norms)),
-            'ros/num_update_minibatches': num_update_minibatches,
+            'ros_num_update_minibatches': num_update_minibatches,
         }
         if pushup_loss:
             ros_stats['ros_pushup_loss'] = float(pushup_loss.item())
@@ -644,6 +607,9 @@ def empirical_grad(args, agent, obs, actions, advantages):
 
 def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step, prefix=""):
     agent_mle = copy.deepcopy(agent).to(args.device)
+
+    # with torch.no_grad():
+    #     agent_mle.actor_logstd[:] = 0
     agent_mle.actor_logstd.requires_grad = False
     params = [p for p in agent_mle.actor_mean.parameters()]
     params[0].requires_grad = False
@@ -656,6 +622,17 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
 
     b_obs = obs.reshape(-1, obs_dim).to(args.device)
     b_actions = actions.reshape(-1, action_dim).to(args.device)
+
+    if args.prob_threshold:
+        with torch.no_grad():
+            _, _, _, b_logprobs, _ = agent.get_action_and_info(b_obs, b_actions, clamp=False)
+
+            logprob_threshold = np.log(args.prob_threshold)
+            mask = b_logprobs > logprob_threshold
+
+        b_obs = b_obs[mask]
+        b_actions = b_actions[mask]
+
 
     n = len(b_obs)
     b_inds = np.arange(n)
@@ -672,7 +649,7 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
             end = start + mb_size
             mb_inds = b_inds[start:end]
 
-            _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs[mb_inds], b_actions[mb_inds], clamp=True)
+            _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs[mb_inds], b_actions[mb_inds], clamp=False)
             loss = -torch.mean(logprobs_mle)
 
             optimizer_mle.zero_grad()
@@ -688,8 +665,8 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
             print('grad norm:', grad_norm)
             print('loss:', loss.item())
 
-            _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
-            _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
+            _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=False)
+            _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=False)
             logratio = logprobs_mle - logprobs_target
             # approx_kl_mle_target = logratio.mean()
             ratio = logratio.exp()
@@ -698,21 +675,29 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
 
 
     with torch.no_grad():
-        _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
+        print('std:', agent_mle.actor_logstd.data.exp())
 
-        _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
+        _, mean_mle, std_mle, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=False)
+
+        _, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=False)
         logratio = logprobs_mle - logprobs_target
         ratio = logratio.exp()
         # approx_kl_mle_target = logratio.mean()
         approx_kl_mle_target = ((ratio - 1) - logratio).mean()
         print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
 
-        _, _, _, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions, clamp=True)
+        _, mean_ros, std_ros, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions, clamp=False)
         logratio = logprobs_ros - logprobs_target
         ratio = logratio.exp()
         # approx_kl_ros_target = logratio.mean()
         approx_kl_ros_target = ((ratio - 1) - logratio).mean()
         print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
+        # print('ros-mle std:',torch.abs(std_ros-std_mle).mean())
+        # print('target-mle std:', torch.abs(std_target-std_mle).mean())
+        # print('ros-target std:', torch.abs(std_ros-std_target).mean())
+        # print('ros-mle mu:',torch.abs(mean_ros-mean_mle).mean())
+        # print('target-mle mu:', torch.abs(mean_target-mean_mle).mean())
+        # print('ros-target mu:', torch.abs(mean_ros-mean_target).mean())
         print('')
 
         sampling_error_logs[f'{prefix}kl_mle_target'].append(approx_kl_mle_target.item())
@@ -774,8 +759,8 @@ def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_log
     env_reward_normalize = envs_se.envs[0].env
     env_obs_normalize = envs_se.envs[0].env.env.env
 
-    env_obs_normalize.set_update(False)
-    env_reward_normalize.set_update(False)
+    # env_obs_normalize.set_update(False)
+    # env_reward_normalize.set_update(False)
 
 
     for i in range(len(agent_buffer)):
@@ -783,7 +768,9 @@ def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_log
         next_obs = next_obs_buffer[i]
 
         for t in range(args.num_steps):
-            obs_buffer[buffer_pos] = next_obs # store normalized obs
+            # obs_buffer[buffer_pos] = next_obs # store normalized obs
+            obs_buffer[buffer_pos] = env_obs_normalize.unnormalize(next_obs) # store unnormalized obs
+
 
             with torch.no_grad():
                 action, action_mean, action_std, _, _, _ = agent.get_action_and_value(next_obs)
@@ -794,6 +781,8 @@ def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_log
 
             buffer_pos += 1
 
+    env_obs_normalize.set_update(False)
+    obs_buffer = env_obs_normalize.normalize(obs_buffer).float()
     compute_se(args, agent_buffer[-1], agent_buffer[-1], obs_buffer, actions_buffer, sampling_error_logs, global_step, prefix="ref_")
 
 
@@ -875,7 +864,8 @@ def main():
     next_obs = torch.Tensor(next_obs).to(args.device)
     next_done = torch.zeros(args.num_envs).to(args.device)
     num_updates = args.total_timesteps // args.batch_size
-    args.se_freq = num_updates // 50
+    if args.se_freq is None:
+        args.se_freq = num_updates // 50
     # There are (ppo num updates)/(ros num updates) times as many ROS updates.
     num_ros_updates = num_updates * (args.num_steps//args.ros_num_steps)
 
@@ -890,7 +880,7 @@ def main():
     agent_buffer = deque(maxlen=args.buffer_batches)
     agent_buffer.append(agent)
     next_obs_buffer = deque(maxlen=args.buffer_batches)
-    agent_buffer.append(next_obs)
+    next_obs_buffer.append(next_obs)
 
     # logging
     ppo_logs = defaultdict(lambda: [])
@@ -978,6 +968,10 @@ def main():
                 print('se')
                 compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
                 compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
+                sampling_error_logs[f'diff_kl_mle_target'].append(sampling_error_logs[f'kl_mle_target'][-1]-sampling_error_logs[f'ref_kl_mle_target'][-1])
+                if args.track:
+                    writer.add_scalar("charts/diff_kl_mle_target", sampling_error_logs[f'diff_kl_mle_target'][-1], global_step)
+
                 # if args.ros_reference:
                 #     reference(args, ref_agent, agent_ros, ref_envs, ref_obs_buffer, ref_actions_buffer, sampling_error_logs, global_step, ref_next_obs)
                 # else:
