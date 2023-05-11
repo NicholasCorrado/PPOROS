@@ -160,17 +160,17 @@ class Agent(nn.Module):
         super().__init__()
         self.critic = nn.Sequential(
             layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
+            nn.ReLU(),
             layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
+            nn.ReLU(),
             layer_init(nn.Linear(64, 1), std=1.0),
         )
         self.actor_mean = nn.Sequential(
             layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
+            nn.ReLU(),
             layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, np.prod(envs.single_action_space.shape)), std=0.01),
+            nn.ReLU(),
+            layer_init(nn.Linear(64, np.prod(envs.single_action_space.shape)), std=1.0),
             nn.Tanh(),
         )
         self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
@@ -675,7 +675,6 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
 
 
     with torch.no_grad():
-        print('std:', agent_mle.actor_logstd.data.exp())
 
         _, mean_mle, std_mle, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=False)
 
@@ -969,6 +968,7 @@ def main():
                 compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
                 compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
                 sampling_error_logs[f'diff_kl_mle_target'].append(sampling_error_logs[f'kl_mle_target'][-1]-sampling_error_logs[f'ref_kl_mle_target'][-1])
+                print('diff_kl_mle_target:', sampling_error_logs['diff_kl_mle_target'])
 
                 np.savez(f'{args.save_dir}/stats.npz',
                          **sampling_error_logs)
