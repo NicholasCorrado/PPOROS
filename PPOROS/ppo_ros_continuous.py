@@ -697,7 +697,7 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
         # print('ros-mle mu:',torch.abs(mean_ros-mean_mle).mean())
         # print('target-mle mu:', torch.abs(mean_target-mean_mle).mean())
         # print('ros-target mu:', torch.abs(mean_ros-mean_target).mean())
-        print('')
+        # print('')
 
         sampling_error_logs[f'{prefix}kl_mle_target'].append(approx_kl_mle_target.item())
         sampling_error_logs[f'{prefix}kl_ros_target'].append(approx_kl_ros_target.item())
