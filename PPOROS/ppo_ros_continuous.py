@@ -620,8 +620,8 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
     #     agent_mle.actor_logstd[:] = 0
     agent_mle.actor_logstd.requires_grad = False
     params = [p for p in agent_mle.actor_mean.parameters()]
-    params[0].requires_grad = False
-    params[2].requires_grad = False
+    # params[0].requires_grad = False
+    # params[2].requires_grad = False
 
     optimizer_mle = optim.Adam(agent_mle.parameters(), lr=args.se_lr)
 
