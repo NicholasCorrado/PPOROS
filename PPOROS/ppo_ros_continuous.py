@@ -156,20 +156,26 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 
 
 class Agent(nn.Module):
-    def __init__(self, envs):
+    def __init__(self, envs, relu=False):
+
+        if relu:
+            activation_fn = nn.ReLU
+        else:
+            activation_fn = nn.Tanh
+
         super().__init__()
         self.critic = nn.Sequential(
             layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
+            activation_fn(),
             layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
+            activation_fn(),
             layer_init(nn.Linear(64, 1), std=1.0),
         )
         self.actor_mean = nn.Sequential(
             layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
+            activation_fn(),
             layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
+            activation_fn(),
             layer_init(nn.Linear(64, np.prod(envs.single_action_space.shape)), std=0.01),
             nn.Tanh(),
         )
@@ -605,15 +611,17 @@ def empirical_grad(args, agent, obs, actions, advantages):
     grads = torch.concat(grads)
     return grads
 
-def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step, prefix=""):
-    agent_mle = copy.deepcopy(agent).to(args.device)
+
+def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step, envs, prefix=""):
+    agent_mle = Agent(envs, relu=True)
+    agent_mle.actor_logstd = copy.deepcopy(agent.actor_logstd)
 
     # with torch.no_grad():
     #     agent_mle.actor_logstd[:] = 0
-    agent_mle.actor_logstd.requires_grad = False
+    # agent_mle.actor_logstd.requires_grad = False
     params = [p for p in agent_mle.actor_mean.parameters()]
-    params[0].requires_grad = False
-    params[2].requires_grad = False
+    # params[0].requires_grad = False
+    # params[2].requires_grad = False
 
     optimizer_mle = optim.Adam(agent_mle.parameters(), lr=args.se_lr)
 
@@ -783,8 +791,7 @@ def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_log
 
     env_obs_normalize.set_update(False)
     obs_buffer = env_obs_normalize.normalize(obs_buffer).float()
-    compute_se(args, agent_buffer[-1], agent_buffer[-1], obs_buffer, actions_buffer, sampling_error_logs, global_step, prefix="ref_")
-
+    compute_se(args, agent_buffer[-1], agent_buffer[-1], obs_buffer, actions_buffer, sampling_error_logs, global_step, envs, prefix="ref_")
 
 
 def main():
@@ -966,10 +973,10 @@ def main():
         if global_step % (args.num_steps*args.se_freq) == 0:
             if args.se:
                 print('se')
-                compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
+                compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step, envs)
                 compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
                 sampling_error_logs[f'diff_kl_mle_target'].append(sampling_error_logs[f'kl_mle_target'][-1]-sampling_error_logs[f'ref_kl_mle_target'][-1])
-
+                print(sampling_error_logs[f'diff_kl_mle_target'])
                 np.savez(f'{args.save_dir}/stats.npz',
                          **sampling_error_logs)
 
