@@ -712,7 +712,6 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
         sampling_error_logs[f'{prefix}kl_ros_target'].append(approx_kl_ros_target.item())
         sampling_error_logs[f'{prefix}ent_target'].append(ent_target.mean().item())
         sampling_error_logs[f'{prefix}ent_ros'].append(ent_ros.mean().item())
-        sampling_error_logs['t'].append(global_step)
 
         np.savez(f'{args.save_dir}/stats.npz',
                  **sampling_error_logs)
@@ -976,6 +975,7 @@ def main():
                 compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step, envs)
                 compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
                 sampling_error_logs[f'diff_kl_mle_target'].append(sampling_error_logs[f'kl_mle_target'][-1]-sampling_error_logs[f'ref_kl_mle_target'][-1])
+                sampling_error_logs['t'].append(global_step)
                 print(sampling_error_logs[f'diff_kl_mle_target'])
                 np.savez(f'{args.save_dir}/stats.npz',
                          **sampling_error_logs)
