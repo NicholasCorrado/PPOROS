@@ -3,40 +3,76 @@ import os
 from PPOROS.scripts.utils import ppo_ros, gen_args, write_to_file
 
 
-def write_args():
 
+def args_swimmer():
 
-    env_ids = ['Hopper-v4', 'HalfCheetah-v4', 'Walker2d-v4', 'Ant-v4', 'Humanoid-v4', 'Swimmer-v4', ]
-    # env_ids = ['Hopper-v4', 'Walker2d-v4']
-    # env_ids = ['Humanoid-v4']
-    env_ids = ['Hopper-v4', 'Walker2d-v4', 'Swimmer-v4']
-    # env_ids = ['Swimmer-v4']
-    # env_ids = ['Ant-v4']
-    # env_ids = ['Hopper-v4']
-    # env_ids = ['Humanoid-v4']
-
-
+    env_ids = ['Swimmer-v4']
     os.makedirs('commands', exist_ok=True)
     for env_id in env_ids:
-        for buffer_size in [4]:
-            f = open(f"commands/ros_b{buffer_size}.txt", "w")
-            num_steps_list = [1024, 2048, 4096, 8192]
-            if env_id in ['Hopper-v4', 'Walker2d-v4']:
-                num_steps_list = [1024, 2048]
-            if env_id in ['Swimmer-v4']:
-                num_steps_list = [1024, 2048, 4096]
-            if env_id in ['Humanoid-v4']:
-                num_steps_list = [8192]
-            for num_steps in num_steps_list:
-                ros_num_steps = 256
-                for lr in [1e-3, 1e-4]:
-                    if env_id in ['Humanoid-v4'] and lr==1e-3: continue
+        for buffer_size in [2]:
+            f = open(f"commands/s.txt", "w")
+            for num_steps in [1024, 2048, 4096]:
+                for lr in [1e-3]:
+                    for ros_lr in [1e-4, 1e-5]:
+                        for ros_update_epochs in [16]:
+                            for ros_lambda in [0, 0.01, 0.1, 0.5]:
+                                for ros_num_steps in [256, 512, 1024, 2048, 4096, 8192]:
+                                    for ros_target_kl in [0.03, 0.05, 0.1]:
+
+                                        if ros_num_steps > num_steps: continue
+
+                                        update_epochs = 10
+                                        target_kl = 0.03
+
+                                        ros_clip_coef = 0.3
+                                        ros_anneal_lr = 0
+
+                                        args = gen_args(
+                                            device='cpu',
+                                            length="short",
+                                            arg_generator=ppo_ros,
+                                            env_id=env_id,
+                                            num_steps=num_steps,
+                                            lr=lr,
+                                            update_epochs=update_epochs,
+                                            target_kl=target_kl,
+                                            ros_lr=ros_lr,
+                                            buffer_size=buffer_size,
+                                            ros_num_steps=ros_num_steps,
+                                            ros_update_epochs=ros_update_epochs,
+                                            ros_target_kl=ros_target_kl,
+                                            ros_clip_coef=ros_clip_coef,
+                                            ros_anneal_lr=ros_anneal_lr,
+                                            stats=0,
+                                            ros_lambda=ros_lambda
+                                        )
+                                        write_to_file(f, args)
+
+def args_hopper():
+
+    env_ids = ['Hopper-v4']
+    os.makedirs('commands', exist_ok=True)
+    for env_id in env_ids:
+        for buffer_size in [2]:
+            f = open(f"commands/ho.txt", "w")
+            for num_steps in [2048]:
+                for lr in [1e-4]:
                     for ros_lr in [1e-3, 1e-4]:
-                        for ros_clip_coef in [0.2,0.3]:
-                            for ros_update_epochs in [4,8,16]:
-                                for update_epochs in [10]:
-                                    for target_kl in [0.03]:
-                                        for ros_target_kl in [0.02, 0.05]:
+                        for ros_update_epochs in [16]:
+                            for ros_lambda in [0, 0.01, 0.1, 0.5]:
+                                for ros_num_steps in [1024, 2048, 4096, 8192]:
+                                    for ros_target_kl in [0.03, 0.05, 0.1]:
+
+                                        if ros_num_steps > num_steps: continue
+                                        # if ros_target_kl == 0.05 and ros_lambda < 0.5: continue
+
+                                        update_epochs = 10
+                                        target_kl = 0.03
+
+                                        ros_clip_coef = 0.3
+                                        ros_anneal_lr = 0
+
+                                        for ros_anneal_lr in [0]:
                                             args = gen_args(
                                                 device='cpu',
                                                 length="short",
@@ -52,15 +88,209 @@ def write_args():
                                                 ros_update_epochs=ros_update_epochs,
                                                 ros_target_kl=ros_target_kl,
                                                 ros_clip_coef=ros_clip_coef,
+                                                ros_anneal_lr=ros_anneal_lr,
                                                 stats=0,
-                                                anneal_lr=1,
-                                                log_stats=1
+                                                ros_lambda=ros_lambda
                                             )
                                             write_to_file(f, args)
 
 
+def args_halfcheetah():
+
+
+    env_ids = ['HalfCheetah-v4']
+    os.makedirs('commands', exist_ok=True)
+    for env_id in env_ids:
+        for buffer_size in [2]:
+            f = open(f"commands/hc.txt", "w")
+            for num_steps in [1024, 2048]:
+                for lr in [1e-3, 1e-4]:
+                    for ros_lr in [1e-4, 1e-5]:
+                        for ros_update_epochs in [16]:
+                            for ros_lambda in [0, 0.01, 0.1, 0.5]:
+                                for ros_num_steps in [1024, 2048, 4096, 8192]:
+                                    for ros_target_kl in [0.03, 0.05, 0.1]:
+
+                                        if ros_num_steps > num_steps: continue
+
+                                        update_epochs = 10
+                                        target_kl = 0.03
+
+                                        ros_clip_coef = 0.3
+                                        ros_anneal_lr = 0
+
+                                        args = gen_args(
+                                            device='cpu',
+                                            length="short",
+                                            arg_generator=ppo_ros,
+                                            env_id=env_id,
+                                            num_steps=num_steps,
+                                            lr=lr,
+                                            update_epochs=update_epochs,
+                                            target_kl=target_kl,
+                                            ros_lr=ros_lr,
+                                            buffer_size=buffer_size,
+                                            ros_num_steps=ros_num_steps,
+                                            ros_update_epochs=ros_update_epochs,
+                                            ros_target_kl=ros_target_kl,
+                                            ros_clip_coef=ros_clip_coef,
+                                            ros_anneal_lr=ros_anneal_lr,
+                                            stats=0,
+                                            ros_lambda=ros_lambda
+                                        )
+                                        write_to_file(f, args)
+
+
+
+def args_walker():
+
+
+    env_ids = ['Walker2d-v4']
+    os.makedirs('commands', exist_ok=True)
+    for env_id in env_ids:
+        for buffer_size in [2]:
+            f = open(f"commands/w.txt", "w")
+            for num_steps in [2048]:
+                for lr in [1e-3]:
+                    for ros_lr in [1e-3, 1e-4]:
+                        for ros_update_epochs in [16]:
+                            for ros_lambda in [0, 0.01, 0.1, 0.5]:
+                                for ros_num_steps in [1024, 2048, 4096, 8192]:
+                                    for ros_target_kl in [0.03, 0.05, 0.1]:
+
+                                        if ros_num_steps > num_steps: continue
+
+                                        update_epochs = 10
+                                        target_kl = 0.03
+
+                                        ros_clip_coef = 0.3
+                                        ros_anneal_lr = 0
+
+                                        args = gen_args(
+                                            device='cpu',
+                                            length="short",
+                                            arg_generator=ppo_ros,
+                                            env_id=env_id,
+                                            num_steps=num_steps,
+                                            lr=lr,
+                                            update_epochs=update_epochs,
+                                            target_kl=target_kl,
+                                            ros_lr=ros_lr,
+                                            buffer_size=buffer_size,
+                                            ros_num_steps=ros_num_steps,
+                                            ros_update_epochs=ros_update_epochs,
+                                            ros_target_kl=ros_target_kl,
+                                            ros_clip_coef=ros_clip_coef,
+                                            ros_anneal_lr=ros_anneal_lr,
+                                            stats=0,
+                                            ros_lambda=ros_lambda
+                                        )
+                                        write_to_file(f, args)
+
+
+def args_ant():
+
+    env_ids = ['Ant-v4']
+    os.makedirs('commands', exist_ok=True)
+    for env_id in env_ids:
+        for buffer_size in [2]:
+            f = open(f"commands/a.txt", "w")
+            for num_steps in [1024]:
+                for lr in [1e-4]:
+                    for ros_lr in [1e-4, 1e-5]:
+                        for ros_update_epochs in [16]:
+                            for ros_lambda in [0, 0.01, 0.1,0.5]:
+                                for ros_num_steps in [256,512,1024, 2048, 4096, 8192]:
+                                    for ros_target_kl in [0.03, 0.05, 0.1]:
+
+                                        if ros_num_steps > num_steps: continue
+
+                                        update_epochs = 10
+                                        target_kl = 0.03
+
+                                        ros_clip_coef = 0.3
+                                        ros_anneal_lr = 0
+
+                                        args = gen_args(
+                                            device='cpu',
+                                            length="short",
+                                            arg_generator=ppo_ros,
+                                            env_id=env_id,
+                                            num_steps=num_steps,
+                                            lr=lr,
+                                            update_epochs=update_epochs,
+                                            target_kl=target_kl,
+                                            ros_lr=ros_lr,
+                                            buffer_size=buffer_size,
+                                            ros_num_steps=ros_num_steps,
+                                            ros_update_epochs=ros_update_epochs,
+                                            ros_target_kl=ros_target_kl,
+                                            ros_clip_coef=ros_clip_coef,
+                                            ros_anneal_lr=ros_anneal_lr,
+                                            stats=0,
+                                            ros_lambda=ros_lambda
+                                        )
+                                        write_to_file(f, args)
+
+
+
+def args_humanoid():
+
+
+    env_ids = ['Humanoid-v4']
+    os.makedirs('commands', exist_ok=True)
+    for env_id in env_ids:
+        for buffer_size in [2]:
+            f = open(f"commands/hu.txt", "w")
+
+            num_steps = 8192
+            ros_num_steps = 8192
+
+            lr = 1e-4
+            ros_lr = 1e-4
+
+            update_epochs = 10
+            ros_update_epochs = 16
+
+            target_kl = 0.03
+            ros_target_kl = 0.05
+
+            ros_lambda = 0.1
+            ros_clip_coef = 0.3
+            ros_anneal_lr = 0
+
+            for ros_num_steps in [1024, 2048, 4096, 8192]:
+                for ros_target_kl in [0.03, 0.05, 0.1]:
+                    for ros_lambda in [0, 0.01, 0.1,0.5]:
+
+                        args = gen_args(
+                            device='cpu',
+                            length="short",
+                            arg_generator=ppo_ros,
+                            env_id=env_id,
+                            num_steps=num_steps,
+                            lr=lr,
+                            update_epochs=update_epochs,
+                            target_kl=target_kl,
+                            ros_lr=ros_lr,
+                            buffer_size=buffer_size,
+                            ros_num_steps=ros_num_steps,
+                            ros_update_epochs=ros_update_epochs,
+                            ros_target_kl=ros_target_kl,
+                            ros_clip_coef=ros_clip_coef,
+                            ros_anneal_lr=ros_anneal_lr,
+                            stats=0,
+                            ros_lambda=ros_lambda
+                        )
+                        write_to_file(f, args)
+
+
 if __name__ == "__main__":
 
-    write_args()
-
+    args_swimmer()
+    # args_hopper()
+    args_halfcheetah()
+    args_walker()
+    args_ant()
+    args_humanoid()
 

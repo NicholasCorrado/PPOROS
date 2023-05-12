@@ -6,8 +6,8 @@ if __name__ == "__main__":
 
     f = open(f"args/ppo_buffer.txt", "w")
     for env_id in env_ids:
-        for history in [2]:
-            for target_kl in [0.1]:
+        for history in [2, 4]:
+            for target_kl in [0.03]:
                 lr = PPOBUFFER_PARAMS[env_id][history]['lr']
                 num_steps = PPOBUFFER_PARAMS[env_id][history]['num_steps']
 
@@ -20,7 +20,7 @@ if __name__ == "__main__":
                     lr=lr,
                     epochs=epochs,
                     num_steps=num_steps,
-                    ros_history=history,
+                    buffer_size=history,
                     target_kl=target_kl,
                     stats=0,
                 )

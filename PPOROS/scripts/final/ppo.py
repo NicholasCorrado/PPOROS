@@ -24,7 +24,7 @@ def write_args():
             if env_id in ['Humanoid-v4']:
                 num_steps_list = [4096, 8192]
             for num_steps in num_steps_list:
-                for target_kl in [0.03, 0.05, 0.1]:
+                for target_kl in [0.03]:
                     epochs = 10
                     args = gen_args(
                         device='cpu',
