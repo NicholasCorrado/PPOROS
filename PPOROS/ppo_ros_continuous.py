@@ -86,6 +86,7 @@ def parse_args():
     parser.add_argument("--normalization-dir", type=str, default=None, help="Directory contatining normalization stats")
 
     parser.add_argument("--se", type=int, default=0)
+    parser.add_argument("--se-ref", type=int, default=1)
     parser.add_argument("--se-lr", type=float, default=1e-3)
     parser.add_argument("--se-epochs", type=int, default=1000)
     parser.add_argument("--se-n", type=int, default=50000)
@@ -615,6 +616,7 @@ def empirical_grad(args, agent, obs, actions, advantages):
 def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step, envs, prefix=""):
     agent_mle = Agent(envs, relu=True)
     agent_mle.actor_logstd = copy.deepcopy(agent.actor_logstd)
+    # agent_mle = copy.deepcopy(agent)
 
     # with torch.no_grad():
     #     agent_mle.actor_logstd[:] = 0
@@ -622,6 +624,12 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
     params = [p for p in agent_mle.actor_mean.parameters()]
     # params[0].requires_grad = False
     # params[2].requires_grad = False
+    agent_mle.actor_mean._modules['1'] = nn.ReLU()
+    agent_mle.actor_mean._modules['3'] = nn.ReLU()
+
+    # params[1] = nn.ReLU()
+    # params[3] = nn.ReLU()
+
 
     optimizer_mle = optim.Adam(agent_mle.parameters(), lr=args.se_lr)
 
@@ -677,8 +685,8 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
             _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=False)
             logratio = logprobs_mle - logprobs_target
             ratio = logratio.exp()
-            approx_kl_mle_target = logratio.mean()
-            # approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+            # approx_kl_mle_target = logratio.mean()
+            approx_kl_mle_target = ((ratio - 1) - logratio).mean()
             print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
 
 
@@ -690,15 +698,15 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
         _, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=False)
         logratio = logprobs_mle - logprobs_target
         ratio = logratio.exp()
-        approx_kl_mle_target = logratio.mean()
-        # approx_kl_mle_target = ((ratio - 1) - logratio).mean()
+        # approx_kl_mle_target = logratio.mean()
+        approx_kl_mle_target = ((ratio - 1) - logratio).mean()
         # print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
 
         _, mean_ros, std_ros, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions, clamp=False)
         logratio = logprobs_ros - logprobs_target
         ratio = logratio.exp()
-        approx_kl_ros_target = logratio.mean()
-        # approx_kl_ros_target = ((ratio - 1) - logratio).mean()
+        # approx_kl_ros_target = logratio.mean()
+        approx_kl_ros_target = ((ratio - 1) - logratio).mean()
         # print('D_kl( ros || target ) = ', approx_kl_ros_target.item())
         # print('ros-mle std:',torch.abs(std_ros-std_mle).mean())
         # print('target-mle std:', torch.abs(std_target-std_mle).mean())
@@ -766,8 +774,8 @@ def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_log
     env_reward_normalize = envs_se.envs[0].env
     env_obs_normalize = envs_se.envs[0].env.env.env
 
-    # env_obs_normalize.set_update(False)
-    # env_reward_normalize.set_update(False)
+    env_obs_normalize.set_update(False)
+    env_reward_normalize.set_update(False)
 
 
     for i in range(len(agent_buffer)):
@@ -775,9 +783,8 @@ def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_log
         next_obs = next_obs_buffer[i]
 
         for t in range(args.num_steps):
-            # obs_buffer[buffer_pos] = next_obs # store normalized obs
-            obs_buffer[buffer_pos] = env_obs_normalize.unnormalize(next_obs) # store unnormalized obs
-
+            obs_buffer[buffer_pos] = next_obs # store normalized obs
+            # obs_buffer[buffer_pos] = env_obs_normalize.unnormalize(next_obs) # store unnormalized obs
 
             with torch.no_grad():
                 action, action_mean, action_std, _, _, _ = agent.get_action_and_value(next_obs)
@@ -788,9 +795,11 @@ def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_log
 
             buffer_pos += 1
 
-    env_obs_normalize.set_update(False)
-    obs_buffer = env_obs_normalize.normalize(obs_buffer).float()
-    compute_se(args, agent_buffer[-1], agent_buffer[-1], obs_buffer, actions_buffer, sampling_error_logs, global_step, envs, prefix="ref_")
+    print(len(agent_buffer), buffer_pos, args.num_steps)
+    # env_obs_normalize.set_update(False)
+    # obs_buffer = env_obs_normalize.normalize(obs_buffer).float()
+    # env_obs_normalize.set_update(True)
+    compute_se(args, agent_buffer[-1], agent_buffer[-1], obs_buffer[:buffer_pos], actions_buffer[:buffer_pos], sampling_error_logs, global_step, envs, prefix="ref_")
 
 
 def main():
@@ -973,10 +982,14 @@ def main():
             if args.se:
                 print('se')
                 compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step, envs)
-                compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
-                sampling_error_logs[f'diff_kl_mle_target'].append(sampling_error_logs[f'kl_mle_target'][-1]-sampling_error_logs[f'ref_kl_mle_target'][-1])
+                if args.se_ref:
+                    compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
+                    sampling_error_logs[f'diff_kl_mle_target'].append(sampling_error_logs[f'kl_mle_target'][-1]-sampling_error_logs[f'ref_kl_mle_target'][-1])
+                    print('diff', sampling_error_logs[f'diff_kl_mle_target'])
+                    print('ref', sampling_error_logs[f'ref_kl_mle_target'])
+
                 sampling_error_logs['t'].append(global_step)
-                print(sampling_error_logs[f'diff_kl_mle_target'])
+                print(sampling_error_logs[f'kl_mle_target'])
                 np.savez(f'{args.save_dir}/stats.npz',
                          **sampling_error_logs)
 
@@ -987,15 +1000,20 @@ def main():
                 #     reference(args, ref_agent, agent_ros, ref_envs, ref_obs_buffer, ref_actions_buffer, sampling_error_logs, global_step, ref_next_obs)
                 # else:
                 #     compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step)
-                
+
 
         advantages = None
+
+        if global_step % args.num_steps == 0:
+            next_obs_buffer.append(copy.deepcopy(next_obs))
+            agent_buffer.append(copy.deepcopy(agent))
+
         if global_step % args.num_steps == 0 and args.update_epochs > 0:
             # ref_envs = copy.deepcopy(envs) # update reference env
-            next_obs_buffer.append(copy.deepcopy(next_obs))
+            # next_obs_buffer.append(copy.deepcopy(next_obs))
             # ref_next_done = copy.deepcopy(next_done)
             # ref_agent = copy.deepcopy(agent) # update reference env
-            agent_buffer.append(copy.deepcopy(agent))
+            # agent_buffer.append(copy.deepcopy(agent))
 
             with torch.no_grad():
                 # next_value = agent.get_value(normalize_obs(obs_rms, next_obs)).reshape(1, -1)
