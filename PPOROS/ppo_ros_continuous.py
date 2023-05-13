@@ -85,7 +85,7 @@ def parse_args():
     parser.add_argument("--policy-path", type=str, default=None, help="Path to pretrained policy")
     parser.add_argument("--normalization-dir", type=str, default=None, help="Directory contatining normalization stats")
 
-    parser.add_argument("--se", type=int, default=0)
+    parser.add_argument("--se", type=int, default=1)
     parser.add_argument("--se-ref", type=int, default=1)
     parser.add_argument("--se-lr", type=float, default=1e-3)
     parser.add_argument("--se-epochs", type=int, default=1000)
@@ -614,18 +614,18 @@ def empirical_grad(args, agent, obs, actions, advantages):
 
 
 def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step, envs, prefix=""):
-    agent_mle = Agent(envs, relu=True)
-    agent_mle.actor_logstd = copy.deepcopy(agent.actor_logstd)
-    # agent_mle = copy.deepcopy(agent)
+    # agent_mle = Agent(envs, relu=True)
+    # agent_mle.actor_logstd = copy.deepcopy(agent.actor_logstd)
+    agent_mle = copy.deepcopy(agent)
 
     # with torch.no_grad():
     #     agent_mle.actor_logstd[:] = 0
-    agent_mle.actor_logstd.requires_grad = False
+    # agent_mle.actor_logstd.requires_grad = False
     params = [p for p in agent_mle.actor_mean.parameters()]
-    # params[0].requires_grad = False
-    # params[2].requires_grad = False
-    agent_mle.actor_mean._modules['1'] = nn.ReLU()
-    agent_mle.actor_mean._modules['3'] = nn.ReLU()
+    params[0].requires_grad = False
+    params[2].requires_grad = False
+    # agent_mle.actor_mean._modules['1'] = nn.ReLU()
+    # agent_mle.actor_mean._modules['3'] = nn.ReLU()
 
     # params[1] = nn.ReLU()
     # params[3] = nn.ReLU()
@@ -671,7 +671,7 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
             optimizer_mle.zero_grad()
             loss.backward()
 
-            grad_norm = nn.utils.clip_grad_norm_(agent_mle.parameters(), 1, norm_type=2)
+            grad_norm = nn.utils.clip_grad_norm_(agent_mle.parameters(), 100, norm_type=2)
 
             optimizer_mle.step()
 
