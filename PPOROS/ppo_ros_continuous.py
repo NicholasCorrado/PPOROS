@@ -620,7 +620,7 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
 
     # with torch.no_grad():
     #     agent_mle.actor_logstd[:] = 0
-    # agent_mle.actor_logstd.requires_grad = False
+    agent_mle.actor_logstd.requires_grad = False
     params = [p for p in agent_mle.actor_mean.parameters()]
     params[0].requires_grad = False
     params[2].requires_grad = False
@@ -641,7 +641,7 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
 
     if args.prob_threshold:
         with torch.no_grad():
-            _, _, _, b_logprobs, _ = agent.get_action_and_info(b_obs, b_actions, clamp=False)
+            _, _, _, b_logprobs, _ = agent.get_action_and_info(b_obs, b_actions, clamp=True)
 
             logprob_threshold = np.log(args.prob_threshold)
             mask = b_logprobs > logprob_threshold
@@ -665,13 +665,13 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
             end = start + mb_size
             mb_inds = b_inds[start:end]
 
-            _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs[mb_inds], b_actions[mb_inds], clamp=False)
+            _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs[mb_inds], b_actions[mb_inds], clamp=True)
             loss = -torch.mean(logprobs_mle)
 
             optimizer_mle.zero_grad()
             loss.backward()
 
-            grad_norm = nn.utils.clip_grad_norm_(agent_mle.parameters(), 100, norm_type=2)
+            grad_norm = nn.utils.clip_grad_norm_(agent_mle.parameters(), 1, norm_type=2)
 
             optimizer_mle.step()
 
@@ -681,8 +681,8 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
             print('grad norm:', grad_norm)
             print('loss:', loss.item())
 
-            _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=False)
-            _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=False)
+            _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
+            _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
             logratio = logprobs_mle - logprobs_target
             ratio = logratio.exp()
             # approx_kl_mle_target = logratio.mean()
@@ -693,16 +693,16 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
     with torch.no_grad():
         # print('std:', agent_mle.actor_logstd.data.exp())
 
-        _, mean_mle, std_mle, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=False)
+        _, mean_mle, std_mle, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
 
-        _, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=False)
+        _, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
         logratio = logprobs_mle - logprobs_target
         ratio = logratio.exp()
         # approx_kl_mle_target = logratio.mean()
         approx_kl_mle_target = ((ratio - 1) - logratio).mean()
         # print('D_kl( mle || target ) = ', approx_kl_mle_target.item())
 
-        _, mean_ros, std_ros, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions, clamp=False)
+        _, mean_ros, std_ros, logprobs_ros, ent_ros = agent_ros.get_action_and_info(b_obs, b_actions, clamp=True)
         logratio = logprobs_ros - logprobs_target
         ratio = logratio.exp()
         # approx_kl_ros_target = logratio.mean()
@@ -777,10 +777,10 @@ def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_log
     env_obs_normalize.set_update(False)
     env_reward_normalize.set_update(False)
 
-
     for i in range(len(agent_buffer)):
         agent = agent_buffer[i]
-        next_obs = next_obs_buffer[i]
+        if i == 0:
+            next_obs = next_obs_buffer[i]
 
         for t in range(args.num_steps):
             obs_buffer[buffer_pos] = next_obs # store normalized obs
@@ -796,9 +796,6 @@ def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_log
             buffer_pos += 1
 
     print(len(agent_buffer), buffer_pos, args.num_steps)
-    # env_obs_normalize.set_update(False)
-    # obs_buffer = env_obs_normalize.normalize(obs_buffer).float()
-    # env_obs_normalize.set_update(True)
     compute_se(args, agent_buffer[-1], agent_buffer[-1], obs_buffer[:buffer_pos], actions_buffer[:buffer_pos], sampling_error_logs, global_step, envs, prefix="ref_")
 
 
