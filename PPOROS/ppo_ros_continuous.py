@@ -464,7 +464,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, ad
             mb_obs = b_obs[mb_inds]
             mb_actions = b_actions[mb_inds]
 
-            _, mu2, sigma2, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
+            _, mu1, sigma1, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
             ros_logratio = ros_logprob - b_logprobs[mb_inds]
             ros_ratio = ros_logratio.exp()
 
@@ -482,8 +482,8 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, ad
 
             pushup_loss = 0
             if args.ros_lambda > 0:
-                mu1 = means[mb_inds]
-                sigma1 = stds[mb_inds]
+                mu2 = means[mb_inds]
+                sigma2 = stds[mb_inds]
                 pushup_loss = (torch.log(sigma2/sigma1) + (sigma1**2 + (mu1-mu2)**2)/(2*sigma2**2) - 0.5).mean()
 
 
@@ -717,7 +717,7 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
 
             _, _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
             _, _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
-            logratio = logprobs_mle - logprobs_target
+            logratio = logprobs_target - logprobs_mle
             ratio = logratio.exp()
             # approx_kl_mle_target = logratio.mean()
             approx_kl_mle_target = ((ratio - 1) - logratio).mean()
