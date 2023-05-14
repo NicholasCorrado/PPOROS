@@ -730,7 +730,7 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
         _, mean_mle, std_mle, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
 
         _, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
-        logratio = logprobs_target - logprobs_mle
+        logratio = logprobs_mle - logprobs_target
         # ratio = logratio.exp()
         approx_kl_mle_target = logratio.mean()
         # approx_kl_mle_target = ((ratio - 1) - logratio).mean()
