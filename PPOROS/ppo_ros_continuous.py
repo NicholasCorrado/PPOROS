@@ -648,13 +648,13 @@ def empirical_grad(args, agent, obs, actions, advantages):
 
 
 def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global_step, envs, prefix=""):
-    # agent_mle = Agent(envs, relu=True)
+    agent_mle = Agent(envs, relu=True)
     # agent_mle.actor_logstd = copy.deepcopy(agent.actor_logstd)
-    agent_mle = copy.deepcopy(agent)
+    # agent_mle = copy.deepcopy(agent)
 
     # with torch.no_grad():
     #     agent_mle.actor_logstd[:] = 0
-    agent_mle.actor_logstd.requires_grad = False
+    # agent_mle.actor_logstd.requires_grad = False
     params = [p for p in agent_mle.actor_mean.parameters()]
     # params[0].requires_grad = False
     # params[2].requires_grad = False
