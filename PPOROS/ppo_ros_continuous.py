@@ -72,10 +72,13 @@ def parse_args():
     parser.add_argument("--ros-target-kl", type=float, default=0.05, help="the target KL divergence threshold")
     parser.add_argument("--ros-max-kl", type=float, default=None, help="the target KL divergence threshold")
     parser.add_argument("--ros-num-actions", type=int, default=0, help="the target KL divergence threshold")
-    parser.add_argument("--ros-lambda", type=float, default=0.0, help="the target KL divergence threshold")
+    parser.add_argument("--ros-lambda", type=float, default=0.3, help="the target KL divergence threshold")
     parser.add_argument("--ros-uniform-sampling", type=bool, default=False, help="the target KL divergence threshold")
     parser.add_argument("--ros-adv", type=bool, default=False, help="the target KL divergence threshold")
     parser.add_argument("--ros-eval", type=int, default=False)
+
+    parser.add_argument("--geppo", type=int, default=0)
+    parser.add_argument("--geppo-clip-coef", type=float, default=0.1)
 
     parser.add_argument("--log-stats", type=int, default=1)
     parser.add_argument("--eval-freq", type=int, default=10, help="evaluate target and ros policy every eval_freq updates")
@@ -88,7 +91,7 @@ def parse_args():
     parser.add_argument("--se", type=int, default=1)
     parser.add_argument("--se-ref", type=int, default=1)
     parser.add_argument("--se-lr", type=float, default=1e-3)
-    parser.add_argument("--se-epochs", type=int, default=1000)
+    parser.add_argument("--se-epochs", type=int, default=250)
     parser.add_argument("--se-n", type=int, default=50000)
     parser.add_argument("--se-freq", type=int, default=None, help="")
     parser.add_argument("--se-verbose", type=int, default=0)
@@ -236,7 +239,7 @@ class Agent(nn.Module):
             action = probs.sample()
         return action
 
-def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
+def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer, agent_buffer):
     # flatten the batch
     b_obs = obs[:global_step].reshape((-1,) + envs.single_observation_space.shape)
     b_logprobs = logprobs[:global_step].reshape(-1)
@@ -262,6 +265,26 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     batch_size = b_obs.shape[0]
     minibatch_size = min(args.minibatch_size, batch_size)
 
+    if args.geppo:
+        with torch.no_grad():
+            b_historic_logprobs = torch.empty_like(b_logprobs)
+
+
+            n = np.clip(global_step//args.num_steps, 1, args.buffer_batches)
+            agent_last = agent_buffer[-1]
+
+            for p1, p2 in zip(agent_last.parameters(), agent.parameters()):
+                if p1.data.ne(p2.data).sum() > 0:
+                    print(p1-p2)
+
+            for i in range(n):
+                agent_i = agent_buffer[i]
+                start = i * args.num_steps
+                end = (i + 1) * args.num_steps
+                _, _, _, new_logprob, _, new_value = agent_i.get_action_and_value(
+                    b_obs[start:end], b_actions[start:end])
+                b_historic_logprobs[start:end] = new_logprob.reshape(-1)
+
     b_inds = np.arange(batch_size)
     clipfracs = []
     grad_norms = []
@@ -277,8 +300,13 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             end = start + minibatch_size
             mb_inds = b_inds[start:end]
             _, _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
-            logratio = newlogprob - b_logprobs[mb_inds]
+
+            if args.geppo:
+                logratio = newlogprob - b_historic_logprobs[mb_inds]
+            else:
+                logratio = newlogprob - b_logprobs[mb_inds]
             ratio = logratio.exp()
+            # if epoch == 0 and num_update_minibatches == 0: print(ratio[-10:])
 
             with torch.no_grad():
                 # calculate approx_kl http://joschu.net/blog/kl-approx.html
@@ -299,7 +327,10 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
             # Policy loss
             pg_loss1 = -mb_advantages * ratio
-            pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+            if args.geppo:
+                pg_loss2 = -mb_advantages * torch.clamp(ratio, ratio - args.clip_coef, ratio + args.clip_coef)
+            else:
+                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
             pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             # Value loss
@@ -337,7 +368,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     var_y = np.var(y_true)
     explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-    if args.track:
+    if args.track and num_update_minibatches > 0:
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("ppo/learning_rate", optimizer.param_groups[0]["lr"], global_step)
@@ -356,20 +387,23 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
         # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-    ppo_stats = {
-        # 't': global_step,
-        'ppo_value_loss': float(v_loss.item()),
-        'ppo_policy_loss': float(pg_loss.item()),
-        'ppo_entropy': float(entropy_loss.item()),
-        'ppo_old_approx_kl': float(old_approx_kl.item()),
-        'ppo_epochs': epoch+1,
-        'ppo_num_update_minibatches': float(num_update_minibatches),
-        'ppo_clip_frac': float(np.mean(clipfracs)),
-        'ppo_explained_variance': float(explained_var),
-        'ppo_grad_norm': float(np.mean(grad_norms))
-    }
-    if approx_kl_to_log:
-        ppo_stats['ppo_approx_kl'] = float(approx_kl_to_log.item())
+    ppo_stats = {}
+
+    if num_update_minibatches > 0:
+        ppo_stats = {
+            # 't': global_step,
+            'ppo_value_loss': float(v_loss.item()),
+            'ppo_policy_loss': float(pg_loss.item()),
+            'ppo_entropy': float(entropy_loss.item()),
+            'ppo_old_approx_kl': float(old_approx_kl.item()),
+            'ppo_epochs': epoch+1,
+            'ppo_num_update_minibatches': float(num_update_minibatches),
+            'ppo_clip_frac': float(np.mean(clipfracs)),
+            'ppo_explained_variance': float(explained_var),
+            'ppo_grad_norm': float(np.mean(grad_norms))
+        }
+        if approx_kl_to_log:
+            ppo_stats['ppo_approx_kl'] = float(approx_kl_to_log.item())
 
     return ppo_stats
 
@@ -430,7 +464,7 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, ad
             mb_obs = b_obs[mb_inds]
             mb_actions = b_actions[mb_inds]
 
-            _, mu1, sigma1, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
+            _, mu2, sigma2, ros_logprob, entropy = agent_ros.get_action_and_info(mb_obs, mb_actions)
             ros_logratio = ros_logprob - b_logprobs[mb_inds]
             ros_ratio = ros_logratio.exp()
 
@@ -448,8 +482,8 @@ def update_ros(agent_ros, agent, envs, ros_optimizer, obs, logprobs, actions, ad
 
             pushup_loss = 0
             if args.ros_lambda > 0:
-                mu2 = means[mb_inds]
-                sigma2 = stds[mb_inds]
+                mu1 = means[mb_inds]
+                sigma1 = stds[mb_inds]
                 pushup_loss = (torch.log(sigma2/sigma1) + (sigma1**2 + (mu1-mu2)**2)/(2*sigma2**2) - 0.5).mean()
 
 
@@ -890,9 +924,7 @@ def main():
     # ref_next_obs = copy.deepcopy(next_obs)
     # ref_next_done = copy.deepcopy(next_done)
     agent_buffer = deque(maxlen=args.buffer_batches)
-    agent_buffer.append(agent)
     next_obs_buffer = deque(maxlen=args.buffer_batches)
-    next_obs_buffer.append(next_obs)
 
     # logging
     ppo_logs = defaultdict(lambda: [])
@@ -1038,7 +1070,7 @@ def main():
                 optimizer.param_groups[0]["lr"] = lrnow
 
             # perform target update and log stats
-            ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+            ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer, agent_buffer)
 
         if args.ros and global_step % args.ros_num_steps == 0 :# and global_step > 25000:
 
