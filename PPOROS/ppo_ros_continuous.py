@@ -652,8 +652,8 @@ def compute_se(args, agent, agent_ros, obs, actions, sampling_error_logs, global
     # agent_mle.actor_logstd = copy.deepcopy(agent.actor_logstd)
     agent_mle = copy.deepcopy(agent)
 
-    # with torch.no_grad():
-    #     agent_mle.actor_logstd[:] = 0
+    with torch.no_grad():
+        agent_mle.actor_logstd[:] = 0
     agent_mle.actor_logstd.requires_grad = False
     params = [p for p in agent_mle.actor_mean.parameters()]
     params[0].requires_grad = False
