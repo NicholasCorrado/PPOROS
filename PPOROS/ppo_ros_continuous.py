@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.optim as optim
 import yaml
 
-from evaluate import Evaluate
+from utils import Evaluate
 from utils import get_latest_run_id, make_env, Agent
 
 
