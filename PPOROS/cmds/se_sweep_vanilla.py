@@ -23,7 +23,7 @@ def ppo_ros(env_id, total_timesteps, se, num_steps, buffer_history, expert, ros_
     else:
         subdir = f"random/b_{buffer_history}/s_{num_steps}/lr_{ros_lr}"
 
-    args = f" ppo_ros_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-episodes 0" \
+    args = f"python ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-episodes 0" \
            f" -b {buffer_history} --num-steps {num_steps} -lr 0 --update-epochs 0 --anneal-lr 0" \
            f" --ros 1 --ros-vanilla 1 --ros-num-steps 1 -ros-lr {ros_lr} --ros-update-epochs 1 --ros-num-minibatches 1 --ros-target-kl 999999999 --ros-anneal-lr 0 " \
            f" --ros-clip-coef 999999999 " \
@@ -41,7 +41,7 @@ def ppo_buffer(env_id, num_steps, buffer_history, se, total_timesteps, expert):
     else:
         subdir = f"random/b_{buffer_history}"
 
-    args = f" ppo_ros_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-episodes 0" \
+    args = f"python ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-episodes 0" \
            f" -lr 0 --ros 0 -b {buffer_history} --num-steps {num_steps} --se {se} --eval-freq 1 --se-freq 1" \
            f" --update-epochs 0 --ros-anneal-lr 0" \
            f" --se {se} --se-freq 1 --se-lr 1e-3 --se-epochs 1000"
