@@ -23,6 +23,9 @@ def parse_args():
     # fmt: off
     parser = argparse.ArgumentParser()
 
+    # We use integers 0/1 instead of booleans False/True simply because the server we use for all experiments may
+    # interpret False/True as strings instead of booleans.
+
     # weights and biases (wandb) parameters. Wandb is disabled by default.
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="If toggled, this experiment will be tracked with Weights and Biases (wandb)")
@@ -48,7 +51,7 @@ def parse_args():
     # General training parameters (both PROPS and PPO)
     parser.add_argument("--env-id", type=str, default="Hopper-v4", help="Environment id")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
-    parser.add_argument("--total-timesteps", type=int, default=2000000, help="Number of timesteps to train")
+    parser.add_argument("--total-timesteps", type=int, default=1000000, help="Number of timesteps to train")
     parser.add_argument("--seed", type=int, default=0, help="Seed of the experiment")
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="If toggled, `torch.backends.cudnn.deterministic=False`")
