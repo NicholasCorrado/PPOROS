@@ -17,7 +17,7 @@ def gen_args(device, length, arg_generator, **kwargs):
 
     return args
 
-def ppo_ros_no_clip(env_id, total_timesteps, se, num_steps, buffer_history, expert,  ros_lr,ros_lambda):
+def ppo_props_no_clip(env_id, total_timesteps, se, num_steps, buffer_history, expert,  props_lr,props_lambda):
     if expert:
         subdir = f"expert/no_clip"
     else:
@@ -26,10 +26,10 @@ def ppo_ros_no_clip(env_id, total_timesteps, se, num_steps, buffer_history, expe
     # subdir = f"expert/b_{buffer_history}"
 
 
-    args = f"ppo_ros_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq 1 --eval-episodes 0" \
+    args = f"python ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq 1 --eval-episodes 0" \
            f" -b {buffer_history} --num-steps {num_steps} -lr 0 --update-epochs 0 --anneal-lr 0" \
-           f" --ros-num-steps 256 --ros-update-epochs 16 --ros-target-kl 0.05 --ros-clip-coef 999999999 --ros-lambda {ros_lambda}" \
-           f" -ros-lr {ros_lr} --ros-anneal-lr 0 " \
+           f" --props-num-steps 256 --props-update-epochs 16 --props-target-kl 0.05 --props-clip-coef 999999999 --props-lambda {props_lambda}" \
+           f" -props-lr {props_lr} --props-anneal-lr 0 " \
            f" --se {se} --se-freq 1 --se-lr 1e-3 --se-epochs 1000"
 
     if expert:
@@ -39,7 +39,7 @@ def ppo_ros_no_clip(env_id, total_timesteps, se, num_steps, buffer_history, expe
 
     return mem, disk, args
 
-def ppo_ros_no_lambda(env_id, total_timesteps, se, num_steps, buffer_history, expert,  ros_lr,ros_lambda):
+def ppo_props_no_lambda(env_id, total_timesteps, se, num_steps, buffer_history, expert,  props_lr,props_lambda):
     if expert:
         subdir = f"expert/no_lambda"
     else:
@@ -48,10 +48,10 @@ def ppo_ros_no_lambda(env_id, total_timesteps, se, num_steps, buffer_history, ex
     # subdir = f"expert/b_{buffer_history}"
 
 
-    args = f"ppo_ros_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq 1 --eval-episodes 0" \
+    args = f"python ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq 1 --eval-episodes 0" \
            f" -b {buffer_history} --num-steps {num_steps} -lr 0 --update-epochs 0 --anneal-lr 0" \
-           f" --ros-num-steps 256 --ros-update-epochs 16 --ros-target-kl 0.05 --ros-clip-coef 0.3 --ros-lambda 0" \
-           f" -ros-lr {ros_lr} --ros-anneal-lr 0 " \
+           f" --props-num-steps 256 --props-update-epochs 16 --props-target-kl 0.05 --props-clip-coef 0.3 --props-lambda 0" \
+           f" -props-lr {props_lr} --props-anneal-lr 0 " \
            f" --se {se} --se-freq 1 --se-lr 1e-3 --se-epochs 1000"
 
     if expert:
@@ -61,7 +61,7 @@ def ppo_ros_no_lambda(env_id, total_timesteps, se, num_steps, buffer_history, ex
 
     return mem, disk, args
 
-def ppo_ros_no_target(env_id, total_timesteps, se, num_steps, buffer_history, expert,  ros_lr,ros_lambda):
+def ppo_props_no_target(env_id, total_timesteps, se, num_steps, buffer_history, expert,  props_lr,props_lambda):
     if expert:
         subdir = f"expert/no_target"
     else:
@@ -70,10 +70,10 @@ def ppo_ros_no_target(env_id, total_timesteps, se, num_steps, buffer_history, ex
     # subdir = f"expert/b_{buffer_history}"
 
 
-    args = f"ppo_ros_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq 1 --eval-episodes 0" \
+    args = f"python ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq 1 --eval-episodes 0" \
            f" -b {buffer_history} --num-steps {num_steps} -lr 0 --update-epochs 0 --anneal-lr 0" \
-           f" --ros-num-steps 256 --ros-update-epochs 16 --ros-target-kl 999999999 --ros-clip-coef 0.3 --ros-lambda {ros_lambda}" \
-           f" -ros-lr {ros_lr} --ros-anneal-lr 0 " \
+           f" --props-num-steps 256 --props-update-epochs 16 --props-target-kl 999999999 --props-clip-coef 0.3 --props-lambda {props_lambda}" \
+           f" -props-lr {props_lr} --props-anneal-lr 0 " \
            f" --se {se} --se-freq 1 --se-lr 1e-3 --se-epochs 1000"
 
     if expert:
@@ -83,7 +83,7 @@ def ppo_ros_no_target(env_id, total_timesteps, se, num_steps, buffer_history, ex
 
     return mem, disk, args
 
-def ppo_ros_none(env_id, total_timesteps, se, num_steps, buffer_history, expert,  ros_lr,ros_lambda):
+def ppo_props_none(env_id, total_timesteps, se, num_steps, buffer_history, expert,  props_lr,props_lambda):
     if expert:
         subdir = f"expert/none"
     else:
@@ -92,10 +92,10 @@ def ppo_ros_none(env_id, total_timesteps, se, num_steps, buffer_history, expert,
     # subdir = f"expert/b_{buffer_history}"
 
 
-    args = f"ppo_ros_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq 1 --eval-episodes 0" \
+    args = f"python ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq 1 --eval-episodes 0" \
            f" -b {buffer_history} --num-steps {num_steps} -lr 0 --update-epochs 0 --anneal-lr 0" \
-           f" --ros-num-steps 256 --ros-update-epochs 16 --ros-target-kl 999999999 --ros-clip-coef 999999999 --ros-lambda 0" \
-           f" -ros-lr {ros_lr} --ros-anneal-lr 0 " \
+           f" --props-num-steps 256 --props-update-epochs 16 --props-target-kl 999999999 --props-clip-coef 999999999 --props-lambda 0" \
+           f" -props-lr {props_lr} --props-anneal-lr 0 " \
            f" --se {se} --se-freq 1 --se-lr 1e-3 --se-epochs 1000"
 
     if expert:
@@ -105,7 +105,7 @@ def ppo_ros_none(env_id, total_timesteps, se, num_steps, buffer_history, expert,
 
     return mem, disk, args
 
-def ppo_ros_clip_lambda(env_id, total_timesteps, se, num_steps, buffer_history, expert,  ros_lr,ros_lambda):
+def ppo_props_clip_lambda(env_id, total_timesteps, se, num_steps, buffer_history, expert,  props_lr,props_lambda):
     if expert:
         subdir = f"expert/b_{buffer_history}/no_clip_lambda"
     else:
@@ -114,10 +114,10 @@ def ppo_ros_clip_lambda(env_id, total_timesteps, se, num_steps, buffer_history, 
     # subdir = f"expert/b_{buffer_history}"
 
 
-    args = f"ppo_ros_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq 1 --eval-episodes 0" \
+    args = f"python ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq 1 --eval-episodes 0" \
            f" -b {buffer_history} --num-steps {num_steps} -lr 0 --update-epochs 0 --anneal-lr 0" \
-           f" --ros-num-steps 256 --ros-update-epochs 16 --ros-target-kl 0.05 --ros-clip-coef 999999999 --ros-lambda 0" \
-           f" -ros-lr {ros_lr} --ros-anneal-lr 0 " \
+           f" --props-num-steps 256 --props-update-epochs 16 --props-target-kl 0.05 --props-clip-coef 999999999 --props-lambda 0" \
+           f" -props-lr {props_lr} --props-anneal-lr 0 " \
            f" --se {se} --se-freq 1 --se-lr 1e-3 --se-epochs 1000"
 
     if expert:
@@ -140,30 +140,30 @@ def write_args():
                 num_steps = 1024
 
                 if env_id in ['Swimmer-v4', 'Ant-v4', 'Humanoid-v4']:
-                    ros_lr = 1e-4
+                    props_lr = 1e-4
                 else:
-                    ros_lr = 1e-3
+                    props_lr = 1e-3
 
                 if env_id in ['Ant-v4', 'Humanoid-v4']:
-                    ros_lambda = 0.3
+                    props_lambda = 0.3
                 else:
-                    ros_lambda = 0.1
+                    props_lambda = 0.1
 
-                # for func in [ppo_ros_no_clip, ppo_ros_no_lambda, ppo_ros_clip_lambda, ppo_ros_none, ppo_ros_no_target]:
-                for func in [ppo_ros_no_clip, ppo_ros_no_lambda, ppo_ros_clip_lambda]:
+                # for func in [ppo_props_no_clip, ppo_props_no_lambda, ppo_props_clip_lambda, ppo_props_none, ppo_props_no_target]:
+                for func in [ppo_props_no_clip, ppo_props_no_lambda, ppo_props_clip_lambda]:
 
                     args = gen_args(
                         device='cuda',
                         length="short",
                         arg_generator=func,
                         env_id=env_id,
-                        ros_lr=ros_lr,
+                        props_lr=props_lr,
                         num_steps=num_steps,
                         buffer_history=buffer_history,
                         se=1,
                         total_timesteps=num_steps*num_collects,
                         expert=expert,
-                        ros_lambda=ros_lambda,
+                        props_lambda=props_lambda,
                     )
                     write_to_file(f, args)
 

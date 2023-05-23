@@ -24,7 +24,7 @@ def ppo_props(env_id, total_timesteps, se, num_steps, buffer_history, expert, pr
     else:
         subdir = f"random"
 
-    args = f" ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq 1 --eval-episodes 0" \
+    args = f"python ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq 1 --eval-episodes 0" \
            f" -b {buffer_history} --num-steps {num_steps} --update-epochs 0 " \
            f" --props-num-steps {props_num_steps} -props-lr {props_lr} --props-target-kl {props_target_kl}" \
            f" --se {se} --se-freq 1 --se-lr 1e-3 --se-epochs 1000"
@@ -45,7 +45,7 @@ def ppo_buffer(env_id, num_steps, buffer_history, se, total_timesteps, expert):
     else:
         subdir = f"random"
 
-    args = f" ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-episodes 0" \
+    args = f"python ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-episodes 0" \
            f" --props 0 -b {buffer_history} --num-steps {num_steps} --se {se} --eval-freq 1 --update-epochs 0" \
            f" --se {se} --se-freq 1 --se-lr 1e-3 --se-epochs 1000"
 

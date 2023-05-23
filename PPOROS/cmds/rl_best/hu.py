@@ -9,7 +9,7 @@ def args_hopper():
     os.makedirs('commands', exist_ok=True)
     for env_id in env_ids:
         for buffer_size in [2]:
-            f = open(f"commands/ros_b{buffer_size}.txt", "w")
+            f = open(f"commands/props_b{buffer_size}.txt", "w")
             for s in [8192]:
                 for lr in [1e-4,]:
                     for rlr in [1e-4, 1e-5]:

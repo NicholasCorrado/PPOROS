@@ -1,5 +1,5 @@
 def write_to_file(f, args):
-    args = args.replace(' ', '*')
+    # args = args.replace(' ', '*')
     print(args)
     f.write(args + "\n")
 
@@ -11,7 +11,7 @@ def gen_args(device, length, arg_generator, **kwargs):
         device_args = f'--device cpu'
 
     mem, disk, other_args = arg_generator(**kwargs)
-    default_args = f"{mem},{disk},"
+    default_args = f""
     args = default_args + other_args
 
     return args
@@ -19,13 +19,13 @@ def gen_args(device, length, arg_generator, **kwargs):
 def ppo_ros(env_id, total_timesteps, se, num_steps, buffer_history, expert, ros_lr):
 
     if expert:
-        subdir = f"expert/b_{buffer_history}/s_{num_steps}/lr_{ros_lr}"
+        subdir = f"expert"
     else:
-        subdir = f"random/b_{buffer_history}/s_{num_steps}/lr_{ros_lr}"
+        subdir = f"random"
 
     args = f"python ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-episodes 0" \
            f" -b {buffer_history} --num-steps {num_steps} -lr 0 --update-epochs 0 --anneal-lr 0" \
-           f" --ros 1 --ros-vanilla 1 --ros-num-steps 1 -ros-lr {ros_lr} --ros-update-epochs 1 --ros-num-minibatches 1 --ros-target-kl 999999999 --ros-anneal-lr 0 " \
+           f" --ros 1 --props 1 --ros-num-steps 1 -ros-lr {ros_lr} --ros-update-epochs 1 --ros-num-minibatches 1 --ros-target-kl 999999999 --ros-anneal-lr 0 " \
            f" --ros-clip-coef 999999999 " \
            f" --se {se} --se-freq 1 --se-lr 1e-3 --se-epochs 1000"
     if expert:
@@ -37,9 +37,9 @@ def ppo_ros(env_id, total_timesteps, se, num_steps, buffer_history, expert, ros_
 
 def ppo_buffer(env_id, num_steps, buffer_history, se, total_timesteps, expert):
     if expert:
-        subdir = f"expert/b_{buffer_history}"
+        subdir = f"expert"
     else:
-        subdir = f"random/b_{buffer_history}"
+        subdir = f"random"
 
     args = f"python ppo_props_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-episodes 0" \
            f" -lr 0 --ros 0 -b {buffer_history} --num-steps {num_steps} --se {se} --eval-freq 1 --se-freq 1" \
@@ -68,12 +68,12 @@ def write_args():
 
     env_ids = ['Ant-v4', 'Humanoid-v4', 'Walker2d-v4', 'Hopper-v4', 'HalfCheetah-v4', 'Swimmer-v4', ]
 
-    f = open(f"data/se.txt", "w")
+    f = open(f"commands/se_fixed_target_ros.txt", "w")
 
 
     # env_ids = ['Swimmer-v4', 'Humanoid-v4'  ]
 
-    for expert in [1, 0]:
+    for expert in [0,1]:
         for buffer_history in [16]:
             num_collects = buffer_history * 2
 
