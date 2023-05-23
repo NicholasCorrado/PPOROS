@@ -10,26 +10,27 @@ PPOROS_PARAMS = {
             'path': '5_12/ros_b2_c0.1/results/Swimmer-v4/ppo_ros/b_2/s_2048/s_512/lr_0.001/lr_0.0001/kl_0.03/kl_0.03/l_0.3/e_16/mb_16/c_0.1/a_0',
         },
         3: {
-            'path': '5_12/ros_b2_c0.1/results/Swimmer-v4/ppo_ros/b_2/s_2048/s_512/lr_0.001/lr_0.001/kl_0.03/kl_0.03/l_0.3/e_16/mb_16/c_0.1/a_0',
+            'path': '5_12/ros_b3_c0.1/results/Swimmer-v4/ppo_ros/b_3/s_4096/s_512/lr_0.001/lr_0.001/kl_0.03/kl_0.05/l_0.3/e_16/mb_16/c_0.1/a_0',
         },
         4: {
-            'path': '5_12/ros_b2_c0.1/results/Swimmer-v4/ppo_ros/b_2/s_2048/s_512/lr_0.001/lr_0.001/kl_0.03/kl_0.03/l_0.3/e_16/mb_16/c_0.1/a_0',
+            'path': '5_12/ros_b4_c0.1/results/Swimmer-v4/ppo_ros/b_4/s_2048/s_512/lr_0.001/lr_0.001/kl_0.03/kl_0.05/l_0.3/e_16/mb_16/c_0.1/a_0',
         },
         8: {
+            'path': '5_13/ros_b8_c0.1/results/Swimmer-v4/ppo_ros/b_8/s_2048/s_256/lr_0.001/lr_0.0001/kl_0.03/kl_0.03/l_0.1/e_16/mb_16/c_0.1/a_0',
         },
     },
     'HalfCheetah-v4': {
         2: {
-            'path': 'PPOROS/plotting/5_12/ros_b2_c0.1/results/HalfCheetah-v4/ppo_ros/b_2/s_2048/s_512/lr_0.0001/lr_0.001/kl_0.03/kl_0.03/l_0.1/e_16/mb_16/c_0.1/a_0',
+            'path': '5_12/ros_b2_c0.1/results/HalfCheetah-v4/ppo_ros/b_2/s_2048/s_512/lr_0.0001/lr_0.001/kl_0.03/kl_0.03/l_0.1/e_16/mb_16/c_0.1/a_0',
         },
-        2: {
-            'path': 'PPOROS/plotting/5_12/ros_b2_c0.1/results/HalfCheetah-v4/ppo_ros/b_2/s_2048/s_256/lr_0.0001/lr_0.001/kl_0.03/kl_0.05/l_0.1/e_16/mb_16/c_0.1/a_0',
+        3: {
+            'path': '5_12/ros_b3_c0.1/results/HalfCheetah-v4/ppo_ros/b_3/s_2048/s_256/lr_0.0001/lr_0.001/kl_0.03/kl_0.05/l_0.1/e_16/mb_16/c_0.1/a_0',
         },
         4: {
-
+            'path': '5_12/ros_b4_c0.1/results/HalfCheetah-v4/ppo_ros/b_4/s_2048/s_256/lr_0.0001/lr_0.0001/kl_0.03/kl_0.05/l_0.3/e_16/mb_16/c_0.1/a_0',
         },
         8: {
-
+            'path': '5_13/ros_b8_c0.1/results/HalfCheetah-v4/ppo_ros/b_8/s_2048/s_512/lr_0.0001/lr_0.001/kl_0.03/kl_0.03/l_0.1/e_16/mb_16/c_0.1/a_0',
         },
     },
     'Hopper-v4': {
@@ -37,24 +38,27 @@ PPOROS_PARAMS = {
             'path': '5_12/ros_b2_c0.1/results/Hopper-v4/ppo_ros/b_2/s_1024/s_256/lr_0.0001/lr_0.001/kl_0.03/kl_0.03/l_0.3/e_16/mb_16/c_0.1/a_0',
         },
         3: {
-            'path': '5_12/ros_b2_c0.1/results/Hopper-v4/ppo_ros/b_2/s_1024/s_256/lr_0.0001/lr_0.001/kl_0.03/kl_0.05/l_0.1/e_16/mb_16/c_0.1/a_0',
+            'path': '5_12/ros_b3_c0.1/results/Hopper-v4/ppo_ros/b_3/s_1024/s_256/lr_0.0001/lr_0.001/kl_0.03/kl_0.05/l_0.1/e_16/mb_16/c_0.1/a_0',
         },
         4: {
+            'path': '5_12/ros_b4_c0.1/results/Hopper-v4/ppo_ros/b_4/s_1024/s_256/lr_0.0001/lr_0.001/kl_0.03/kl_0.03/l_0.3/e_16/mb_16/c_0.1/a_0',
         },
         8: {
+            'path': '5_13/ros_b8_c0.1/results/Hopper-v4/ppo_ros/b_8/s_1024/s_256/lr_0.0001/lr_0.001/kl_0.03/kl_0.03/l_0.3/e_16/mb_16/c_0.1/a_0',
         },
     },
     'Walker2d-v4': {
         2: {
             'path': '5_12/ros_b2_c0.1/results/Walker2d-v4/ppo_ros/b_2/s_2048/s_256/lr_0.001/lr_0.0001/kl_0.03/kl_0.05/l_0.3/e_16/mb_16/c_0.1/a_0',
         },
-        2: {
-            'path': '5_12/ros_b2_c0.1/results/Walker2d-v4/ppo_ros/b_2/s_2048/s_512/lr_0.001/lr_0.0001/kl_0.03/kl_0.03/l_0.3/e_16/mb_16/c_0.1/a_0',
+        3: {
+            'path': '5_12/ros_b3_c0.1/results/Walker2d-v4/ppo_ros/b_3/s_2048/s_512/lr_0.001/lr_0.001/kl_0.03/kl_0.03/l_0.3/e_16/mb_16/c_0.1/a_0',
         },
         4: {
-            'path': '5_06/ros_b4_1/results/Walker2d-v4/ppo_ros/b_4/s_2048/s_256/lr_0.001/lr_0.0001/kl_0.03/kl_0.03/l_0.01/e_16/mb_32/c_0.3/a_0',
+            'path': '5_12/ros_b4_c0.1/results/Walker2d-v4/ppo_ros/b_4/s_2048/s_256/lr_0.001/lr_0.0001/kl_0.03/kl_0.05/l_0.1/e_16/mb_16/c_0.1/a_0',
         },
         8: {
+            'path': '5_13/ros_b8_c0.1/results/Walker2d-v4/ppo_ros/b_8/s_2048/s_512/lr_0.001/lr_0.001/kl_0.03/kl_0.03/l_0.3/e_16/mb_16/c_0.1/a_0',
         },
     },
     'Ant-v4': {
@@ -62,11 +66,13 @@ PPOROS_PARAMS = {
             'path': '5_12/ros_b2_c0.1/results/Ant-v4/ppo_ros/b_2/s_1024/s_256/lr_0.0001/lr_0.0001/kl_0.03/kl_0.03/l_0.3/e_16/mb_16/c_0.1/a_0',
         },
         3: {
-            'path': '5_12/ros_b2_c0.1/results/Ant-v4/ppo_ros/b_2/s_1024/s_256/lr_0.0001/lr_0.0001/kl_0.03/kl_0.05/l_0.1/e_16/mb_16/c_0.1/a_0',
+            'path': '5_12/ros_b3_c0.1/results/Ant-v4/ppo_ros/b_3/s_1024/s_256/lr_0.0001/lr_0.0001/kl_0.03/kl_0.05/l_0.1/e_16/mb_16/c_0.1/a_0',
         },
         4: {
+            'path': '5_12/ros_b4_c0.1/results/Ant-v4/ppo_ros/b_4/s_1024/s_256/lr_0.0001/lr_0.001/kl_0.03/kl_0.03/l_0.1/e_16/mb_16/c_0.1/a_0',
         },
         8: {
+            'path': '5_13/ros_b8_c0.1/results/Ant-v4/ppo_ros/b_8/s_1024/s_512/lr_0.0001/lr_0.001/kl_0.03/kl_0.05/l_0.3/e_16/mb_16/c_0.1/a_0',
         },
     },
     'Humanoid-v4': {
@@ -81,6 +87,9 @@ PPOROS_PARAMS = {
             'ros_lr': 1e-3,
             'ros_lambda': 0.1,
             'ros_target_kl': 0.05, # 0.1
+        },
+        3: {
+            'path': '',
         },
         4: {
         },
