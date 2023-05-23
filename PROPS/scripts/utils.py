@@ -31,7 +31,7 @@ EVAL_FREQ = {
 }
 
 def write_to_file(f, args):
-    args = args.replace(' ', '*')
+    # args = args.replace(' ', '*')
     print(args)
     f.write(args + "\n")
 
@@ -44,6 +44,7 @@ def gen_args(device, length, arg_generator, **kwargs):
 
     mem, disk, other_args = arg_generator(**kwargs)
     default_args = f"{mem},{disk},"
+    default_args = ""
     args = default_args + other_args
 
     return args
@@ -79,14 +80,14 @@ def ppo_ros(
 
     # subdir = f"history_{buffer_size}/num_steps_{num_steps}/num_steps_{ros_num_steps}/lr_{lr}/lr_{ros_lr}/kl_{target_kl}/kl_{ros_target_kl}/epochs_{update_epochs}/epochs_{ros_update_epochs}/clip_{ros_clip_coef}/"
     subdir = f"b_{buffer_size}/s_{num_steps}/s_{ros_num_steps}/lr_{lr}/lr_{ros_lr}/kl_{target_kl}/kl_{ros_target_kl}/l_{ros_lambda}/e_{ros_update_epochs}/mb_{ros_mb}/c_{ros_clip_coef}/a_{ros_anneal_lr}"
-
+    subdir = f"b_{buffer_size}"
     se_freq = 50
     if 'Swim' in env_id:
         se_freq = 5
     if 'Hop' in env_id:
         se_freq = 20
 
-    args = f" ppo_ros_continuous.py --env-id {env_id} -s {subdir} " \
+    args = f"python ppo_props_continuous.py --env-id {env_id} -s {subdir}" \
            f" --total-timesteps {TIMESTEPS[env_id]} --eval-freq {EVAL_FREQ[env_id]}" \
            f" -lr {lr} --num-steps {num_steps} --update-epochs {update_epochs} --anneal-lr 1" \
            f" -b {buffer_size} --ros 1 --ros-num-steps {ros_num_steps} -ros-lr {ros_lr} --ros-update-epochs {ros_update_epochs} --ros-num-minibatches {ros_mb}" \
@@ -97,7 +98,7 @@ def ppo_ros(
       args += f" --cutoff-timesteps {CUTOFFS[env_id]} "
 
     if ros_lambda:
-        args += f" --ros-lambda {ros_lambda} --ros-num-actions 0 --ros-uniform-sampling 0"
+        args += f" --ros-lambda {ros_lambda}"
 
     if target_kl:
         args += f" --target-kl {target_kl}"
@@ -128,8 +129,8 @@ def ppo(
         save_policy=False,
 ):
     # subdir = f"df_{num_steps//2048}/lr_{lr}/kl_{target_kl}"
-    subdir = f"s_{num_steps}/lr_{lr}/kl_{target_kl}/e_{update_epochs}"
-    args = f" ppo_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {total_timesteps} --eval-freq {EVAL_FREQ[env_id]}" \
+    subdir = f""
+    args = f"ppo_continuous.py --env-id {env_id} -total-timesteps {total_timesteps} --eval-freq {EVAL_FREQ[env_id]}" \
            f" -lr {lr} --num-steps {num_steps} --num-minibatches 32 --update-epochs {update_epochs}" \
            f" --compute-sampling-error {stats} --save-policy {save_policy}"
 
@@ -142,7 +143,7 @@ def ppo(
     return mem, disk, args
 
 def ppo_buffer(env_id, lr, num_steps, buffer_size, se, target_kl, epochs, df=1):
-    subdir = f"b_{buffer_size}/s_{num_steps}/lr_{lr}/kl_{target_kl}/e_{epochs}"
+    subdir = f""
 
     se_freq = 20
     if 'Swim' in env_id:
@@ -150,7 +151,7 @@ def ppo_buffer(env_id, lr, num_steps, buffer_size, se, target_kl, epochs, df=1):
     if 'Hop' in env_id:
         se_freq = 20
 
-    args = f" ppo_ros_continuous.py --env-id {env_id} -s {subdir} --total-timesteps {TIMESTEPS[env_id]*df} --eval-freq {EVAL_FREQ[env_id]}" \
+    args = f"python ppo_props_continuous.py --env-id {env_id} --total-timesteps {TIMESTEPS[env_id]*df} --eval-freq {EVAL_FREQ[env_id]}" \
            f" -lr {lr} --num-steps {num_steps*2}" \
            f" -b {buffer_size} --ros 0 " \
            f" --se {se} --se-lr 1e-3 --se-epochs 1000 "

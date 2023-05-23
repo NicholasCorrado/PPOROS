@@ -159,6 +159,8 @@ def parse_args():
 
 
 def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
+    # PPO UPDATE
+
     # flatten buffer data
     b_obs = obs[:global_step].reshape((-1,) + envs.single_observation_space.shape)
     b_logprobs = logprobs[:global_step].reshape(-1)
@@ -281,6 +283,8 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
 
 def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, global_step, args, writer, means, stds):
+    # PROPS UPDATE
+
     if global_step <= args.buffer_size - args.props_num_steps:
         # If the replay buffer is not full, use all data in replay buffer for this update.
         start = 0
@@ -393,6 +397,8 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, glo
 
 
 def compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, global_step, envs, prefix=""):
+    # COMPUTE SAMPLING ERROR
+
     # Initialize empirical policy equal to the current PPO policy.
     agent_mle = copy.deepcopy(agent)
 
@@ -452,6 +458,8 @@ def compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, glob
 
 
 def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step):
+    # COMPUTE ON-POLICY SAMPLING ERROR USING THE TARGET POLICY SEQUENCE OBTAINED DURING TRAINING
+
     envs_se = copy.deepcopy(envs)
 
     obs_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs_se.single_observation_space.shape).to(args.device)
