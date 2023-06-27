@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 from distutils.util import strtobool
 
 import gymnasium as gym
-# import custom_envs
+import custom_envs
 import numpy as np
 import torch
 import torch.nn as nn
@@ -105,7 +105,7 @@ def parse_args():
     parser.add_argument("--props-target-kl", type=float, default=0.05,
                         help="Target/cutoff KL divergence threshold for PROPS update")
     parser.add_argument("--props-lambda", type=float, default=0.3, help="Regularization coefficient for PROPS update")
-    parser.add_argument("--props-adv", type=float, default=True, help="If True, the PROPS update is weighted using the absolute advantage |A(s,a)|")
+    parser.add_argument("--props-adv", type=int, default=False, help="If True, the PROPS update is weighted using the absolute advantage |A(s,a)|")
     parser.add_argument("--props-eval", type=int, default=False,
                         help="If set, the PROPS policy is evaluated every props_eval ")
 
