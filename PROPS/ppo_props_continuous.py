@@ -1,4 +1,3 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy
 import argparse
 import copy
 import os
@@ -9,6 +8,7 @@ from collections import defaultdict, deque
 from distutils.util import strtobool
 
 import gymnasium as gym
+# import custom_envs
 import numpy as np
 import torch
 import torch.nn as nn
@@ -49,7 +49,7 @@ def parse_args():
                         help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
 
     # General training parameters (both PROPS and PPO)
-    parser.add_argument("--env-id", type=str, default="Hopper-v4", help="Environment id")
+    parser.add_argument("--env-id", type=str, default="Goal2D-v0", help="Environment id")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="Number of timesteps to train")
     parser.add_argument("--seed", type=int, default=0, help="Seed of the experiment")
@@ -105,14 +105,15 @@ def parse_args():
     parser.add_argument("--props-target-kl", type=float, default=0.05,
                         help="Target/cutoff KL divergence threshold for PROPS update")
     parser.add_argument("--props-lambda", type=float, default=0.3, help="Regularization coefficient for PROPS update")
+    parser.add_argument("--props-adv", type=float, default=True, help="If True, the PROPS update is weighted using the absolute advantage |A(s,a)|")
     parser.add_argument("--props-eval", type=int, default=False,
                         help="If set, the PROPS policy is evaluated every props_eval ")
 
     # Sampling error (se)
-    parser.add_argument("--se", type=int, default=1,
+    parser.add_argument("--se", type=int, default=0,
                         help="If True, sampling error is computed every se_freq PPO updates.")
-    parser.add_argument("--se-ref", type=int, default=1,
-                        help="If True, on-policy sampling error is computed using the PPO policy sequence obtained while using PROPS.")
+    parser.add_argument("--se-ref", type=int, default=0,
+                        help="If True, on-policy sampling error is computed using the PPO policy sequence obtained while using PROPS. Only applies if se is True.")
     parser.add_argument("--se-lr", type=float, default=1e-3,
                         help="Adam optimizer learning rate used to compute the empirical (maximum likelihood) policy in sampling error computation.")
     parser.add_argument("--se-epochs", type=int, default=250,
@@ -282,7 +283,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     return ppo_stats
 
 
-def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, global_step, args, writer, means, stds):
+def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, advantages, global_step, args, writer, means, stds):
     # PROPS UPDATE
 
     if global_step <= args.buffer_size - args.props_num_steps:
@@ -301,6 +302,9 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, glo
     b_actions = actions[start:end].reshape((-1,) + envs.single_action_space.shape)
     means = means[start:end]  # mean action for PPO policy
     stds = stds[start:end]  # std for PPO policy
+
+    if args.props_adv:
+        abs_advantages = torch.abs(advantages[start:end]).reshape(-1)
 
     batch_size = b_obs.shape[0]
     minibatch_size = min(args.props_minibatch_size, batch_size)
@@ -322,6 +326,10 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, glo
             mb_inds = b_inds[start:end]
             mb_obs = b_obs[mb_inds]
             mb_actions = b_actions[mb_inds]
+            if args.props_adv:
+                mb_abs_advantages = abs_advantages[mb_inds]
+                if args.norm_adv:
+                    mb_abs_advantages = (mb_abs_advantages - mb_abs_advantages.mean()) / (mb_abs_advantages.std() + 1e-8)
 
             _, mu1, sigma1, props_logprob, entropy = agent_props.get_action_and_info(mb_obs, mb_actions)
             props_logratio = props_logprob - b_logprobs[mb_inds]
@@ -339,16 +347,17 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, glo
                         break
                 approx_kl_to_log = approx_kl
 
-            kl_regularizer_loss = 0
-            if args.props_lambda > 0:
-                mu2 = means[mb_inds]
-                sigma2 = stds[mb_inds]
-                kl_regularizer_loss = (torch.log(sigma2 / sigma1) + (sigma1 ** 2 + (mu1 - mu2) ** 2) / (
-                            2 * sigma2 ** 2) - 0.5).mean()
+            mu2 = means[mb_inds]
+            sigma2 = stds[mb_inds]
+            kl_regularizer_loss = (torch.log(sigma2 / sigma1) + (sigma1 ** 2 + (mu1 - mu2) ** 2) / (
+                        2 * sigma2 ** 2) - 0.5).mean()
 
             pg_loss1 = props_ratio
             pg_loss2 = torch.clamp(props_ratio, 1 - args.props_clip_coef, 1 + args.props_clip_coef)
-            pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+            if args.props_adv:
+                pg_loss = (torch.max(pg_loss1, pg_loss2) * mb_abs_advantages).mean()
+            else:
+                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             if args.ros:
                 pg_loss = -props_logratio.mean()
@@ -500,7 +509,8 @@ def main():
         import wandb
         from torch.utils.tensorboard import SummaryWriter
 
-        wandb.login(key=args.wandb_login_key)
+        # wandb.login(key=args.wandb_login_key)
+        wandb.login(key='7313077863c8908c24cc6058b99c2b2cc35d326b')
         wandb.init(
             project=args.wandb_project_name,
             entity=args.wandb_entity,
@@ -610,7 +620,7 @@ def main():
                         next_obs)
                     if args.track:
                         writer.add_scalar("props/action_mean", action_mean.detach().mean().item(), global_step)
-                        writer.add_scalar("ros/action_std", action_std.detach().mean().item(), global_step)
+                        writer.add_scalar("props/action_std", action_std.detach().mean().item(), global_step)
                 else:
                     action, action_mean, action_std, _, _, _ = agent.get_action_and_value(next_obs)
                 actions_buffer[buffer_pos] = action
@@ -672,11 +682,11 @@ def main():
                     compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
                     sampling_error_logs[f'diff_kl_mle_target'].append(
                         sampling_error_logs[f'kl_mle_target'][-1] - sampling_error_logs[f'ref_kl_mle_target'][-1])
-                    print('diff', sampling_error_logs[f'diff_kl_mle_target'])
-                    print('ref', sampling_error_logs[f'ref_kl_mle_target'])
+                    print('(PROPS - On-policy) sampling error:', sampling_error_logs[f'diff_kl_mle_target'])
+                    print('On-policy sampling error:', sampling_error_logs[f'ref_kl_mle_target'])
 
                 sampling_error_logs['t'].append(global_step)
-                print(sampling_error_logs[f'kl_mle_target'])
+                print('PROPS sampling error:', sampling_error_logs[f'kl_mle_target'])
                 np.savez(f'{args.save_dir}/stats.npz',
                          **sampling_error_logs)
 
@@ -684,33 +694,32 @@ def main():
                     writer.add_scalar("charts/diff_kl_mle_target", sampling_error_logs[f'diff_kl_mle_target'][-1],
                                       global_step)
 
-        advantages = None
-
         # Store the b previous target policies. We do this so we can compute on-policy sampling error with respect to
         # the target policy sequence obtained by PROPS.
         if global_step % args.num_steps == 0:
             next_obs_buffer.append(copy.deepcopy(next_obs))
             agent_buffer.append(copy.deepcopy(agent))
 
+
+        # Compute advantages and returns. If props_adv = True, then we must recompute advantages before every PROPS update, not just every target update.
+        with torch.no_grad():
+            next_value = agent.get_value(next_obs).reshape(1, -1)
+            advantages = torch.zeros_like(rewards).to(args.device)
+            lastgaelam = 0
+            num_steps = indices.shape[0]
+            for t in reversed(range(num_steps)):
+                if t == num_steps - 1:
+                    nextnonterminal = 1.0 - next_done
+                    nextvalues = next_value
+                else:
+                    nextnonterminal = 1.0 - dones[t + 1]
+                    nextvalues = values[t + 1]
+                delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+            returns = advantages + values
+
         # PPO update
         if global_step % args.num_steps == 0 and args.update_epochs > 0:
-
-            # Compute advantages and returns
-            with torch.no_grad():
-                next_value = agent.get_value(next_obs).reshape(1, -1)
-                advantages = torch.zeros_like(rewards).to(args.device)
-                lastgaelam = 0
-                num_steps = indices.shape[0]
-                for t in reversed(range(num_steps)):
-                    if t == num_steps - 1:
-                        nextnonterminal = 1.0 - next_done
-                        nextvalues = next_value
-                    else:
-                        nextnonterminal = 1.0 - dones[t + 1]
-                        nextvalues = values[t + 1]
-                    delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                    advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-                returns = advantages + values
 
             target_update += 1
 
@@ -737,7 +746,7 @@ def main():
                 source_param.data.copy_(dump_param.data)
 
             # perform props behavior update and log stats
-            props_stats = update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, global_step, args,
+            props_stats = update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, advantages, global_step, args,
                                        writer, means, stds)
 
         # Evaluate agent performance
