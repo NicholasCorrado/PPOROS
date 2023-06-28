@@ -304,7 +304,7 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
     stds = stds[start:end]  # std for PPO policy
 
     if args.props_adv:
-        abs_advantages = torch.abs(advantages[start:end]).reshape(-1)
+        b_advantages = advantages[start:end].reshape(-1)
 
     batch_size = b_obs.shape[0]
     minibatch_size = min(args.props_minibatch_size, batch_size)
@@ -327,9 +327,11 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
             mb_obs = b_obs[mb_inds]
             mb_actions = b_actions[mb_inds]
             if args.props_adv:
-                mb_abs_advantages = abs_advantages[mb_inds]
+                mb_advantages = b_advantages[mb_inds]
                 if args.norm_adv:
-                    mb_abs_advantages = (mb_abs_advantages - mb_abs_advantages.mean()) / (mb_abs_advantages.std() + 1e-8)
+                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                    mb_abs_advantages = torch.abs(mb_advantages)
+                # print(torch.mean(mb_abs_advantages), torch.std(mb_abs_advantages))
 
             _, mu1, sigma1, props_logprob, entropy = agent_props.get_action_and_info(mb_obs, mb_actions)
             props_logratio = props_logprob - b_logprobs[mb_inds]
@@ -405,7 +407,7 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
     return props_stats
 
 
-def compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, global_step, envs, prefix=""):
+def compute_se(args, agent, agent_props, obs, actions, advantages, sampling_error_logs, global_step, envs, prefix=""):
     # COMPUTE SAMPLING ERROR
 
     # Initialize empirical policy equal to the current PPO policy.
@@ -422,6 +424,7 @@ def compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, glob
     action_dim = actions.shape[-1]
     b_obs = obs.reshape(-1, obs_dim).to(args.device)
     b_actions = actions.reshape(-1, action_dim).to(args.device)
+    b_advantages = advantages.reshape(-1).to(args.device)
 
     n = len(b_obs)
     b_inds = np.arange(n)
@@ -446,16 +449,16 @@ def compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, glob
         _, mean_mle, std_mle, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
 
         # Compute sampling error
-        _, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions,
-                                                                                            clamp=True)
+        _, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
+        b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
+        b_advantages = torch.abs(b_advantages)
         logratio = logprobs_mle - logprobs_target
-        approx_kl_mle_target = logratio.mean()
+        approx_kl_mle_target = (b_advantages * logratio).mean()
 
         # Compute KL divergence between PROPS and PPO policy
-        _, mean_props, std_props, logprobs_props, ent_props = agent_props.get_action_and_info(b_obs, b_actions,
-                                                                                              clamp=True)
+        _, mean_props, std_props, logprobs_props, ent_props = agent_props.get_action_and_info(b_obs, b_actions, clamp=True)
         logratio = logprobs_target - logprobs_props
-        approx_kl_props_target = logratio.mean()
+        approx_kl_props_target = (torch.abs(b_advantages) * logratio).mean()
 
         sampling_error_logs[f'{prefix}kl_mle_target'].append(approx_kl_mle_target.item())
         sampling_error_logs[f'{prefix}kl_props_target'].append(approx_kl_props_target.item())
@@ -674,32 +677,11 @@ def main():
             values = new_value
             logprobs = new_logprob.reshape(-1, 1)
 
-        # Compute sampling error *before* updating the target policy.
-        if global_step % (args.num_steps * args.se_freq) == 0:
-            if args.se:
-                compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, global_step, envs)
-                if args.se_ref:
-                    compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
-                    sampling_error_logs[f'diff_kl_mle_target'].append(
-                        sampling_error_logs[f'kl_mle_target'][-1] - sampling_error_logs[f'ref_kl_mle_target'][-1])
-                    print('(PROPS - On-policy) sampling error:', sampling_error_logs[f'diff_kl_mle_target'])
-                    print('On-policy sampling error:', sampling_error_logs[f'ref_kl_mle_target'])
-
-                sampling_error_logs['t'].append(global_step)
-                print('PROPS sampling error:', sampling_error_logs[f'kl_mle_target'])
-                np.savez(f'{args.save_dir}/stats.npz',
-                         **sampling_error_logs)
-
-                if args.track:
-                    writer.add_scalar("charts/diff_kl_mle_target", sampling_error_logs[f'diff_kl_mle_target'][-1],
-                                      global_step)
-
         # Store the b previous target policies. We do this so we can compute on-policy sampling error with respect to
         # the target policy sequence obtained by PROPS.
         if global_step % args.num_steps == 0:
             next_obs_buffer.append(copy.deepcopy(next_obs))
             agent_buffer.append(copy.deepcopy(agent))
-
 
         # Compute advantages and returns. If props_adv = True, then we must recompute advantages before every PROPS update, not just every target update.
         with torch.no_grad():
@@ -717,6 +699,27 @@ def main():
                 delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
+
+        # Compute sampling error *before* updating the target policy.
+        if global_step % (args.num_steps * args.se_freq) == 0:
+            if args.se:
+                compute_se(args, agent, agent_props, obs, actions, advantages, sampling_error_logs, global_step, envs)
+                if args.se_ref:
+                    compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
+                    sampling_error_logs[f'diff_kl_mle_target'].append(
+                        sampling_error_logs[f'kl_mle_target'][-1] - sampling_error_logs[f'ref_kl_mle_target'][-1])
+                    print('(PROPS - On-policy) sampling error:', sampling_error_logs[f'diff_kl_mle_target'])
+                    print('On-policy sampling error:', sampling_error_logs[f'ref_kl_mle_target'])
+
+                sampling_error_logs['t'].append(global_step)
+                print('PROPS sampling error:', sampling_error_logs[f'kl_mle_target'])
+                np.savez(f'{args.save_dir}/stats.npz',
+                         **sampling_error_logs)
+
+                if args.track:
+                    writer.add_scalar("charts/diff_kl_mle_target", sampling_error_logs[f'diff_kl_mle_target'][-1],
+                                      global_step)
+
 
         # PPO update
         if global_step % args.num_steps == 0 and args.update_epochs > 0:
