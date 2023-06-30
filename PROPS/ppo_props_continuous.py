@@ -704,8 +704,8 @@ def main():
             returns = advantages + values
 
         # Compute sampling error *before* updating the target policy.
-        if global_step % (args.num_steps * args.se_freq) == 0:
-            if args.se:
+        if args.se:
+            if global_step % (args.num_steps * args.se_freq) == 0:
                 compute_se(args, agent, agent_props, obs, actions, advantages, sampling_error_logs, global_step, envs)
                 if args.se_ref:
                     compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
