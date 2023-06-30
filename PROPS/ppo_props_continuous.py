@@ -135,7 +135,10 @@ def parse_args():
     args.device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     if args.seed is None:
-        args.seed = np.random.randint(2 ** 32 - 1)
+        if args.run_id:
+            args.seed = np.random.randint(args.run_id)
+        else:
+            args.seed = np.random.randint(2 ** 32 - 1)
 
     if args.props:
         save_dir = f"{args.results_dir}/{args.env_id}/ppo_props/{args.results_subdir}"
