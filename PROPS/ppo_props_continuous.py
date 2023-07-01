@@ -331,9 +331,10 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
             mb_actions = b_actions[mb_inds]
             if args.props_adv:
                 mb_advantages = b_advantages[mb_inds]
-                if args.norm_adv:
-                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-                    mb_abs_advantages = torch.abs(mb_advantages)
+                mb_abs_advantages = torch.abs(mb_advantages)
+                # if args.norm_adv:
+                    # mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                    # mb_abs_advantages = torch.abs(mb_advantages)
                 # print(torch.mean(mb_abs_advantages), torch.std(mb_abs_advantages))
 
             _, mu1, sigma1, props_logprob, entropy = agent_props.get_action_and_info(mb_obs, mb_actions)
