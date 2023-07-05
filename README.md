@@ -51,5 +51,6 @@ conda activate props
 pip install -e PROPS
 
 cd PROPS/plotting/neurips
+tar xzvf data.tar.gz
 python return.py
 ```
