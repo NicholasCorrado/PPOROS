@@ -42,3 +42,14 @@ All commands required to reproduce experiments in the paper's main body and appe
 
 By default, results are saved to `results/<env_id>/<algo>/` in numpy archive format (`.npz`).
 
+## Plotting data
+
+Data and plotting scripts for the NeurIPS 2023 submission are in `plotting/neurips/`.
+```commandline
+conda create -n props python=3.9
+conda activate props
+pip install -e PROPS
+
+cd PROPS/plotting/neurips
+python return.py
+```
