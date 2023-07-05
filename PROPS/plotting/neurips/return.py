@@ -18,7 +18,7 @@ PROPS_PATHS = {
     },
     'Hopper-v4': {
         2: {
-            'path': 'data/rl/props/Hopper-v4/ppo_ros/b_2/s_2048/s_256/lr_0.001/lr_0.001/kl_0.03/kl_0.05/l_0.3/e_16/mb_16/c_0.3/a_0',
+            'path': 'data/rl/props/results/Hopper-v4/ppo_ros/b_2/s_2048/s_256/lr_0.001/lr_0.001/kl_0.03/kl_0.05/l_0.3/e_16/mb_16/c_0.3/a_0',
         }
     },
     'Walker2d-v4': {
