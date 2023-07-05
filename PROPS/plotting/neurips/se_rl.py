@@ -4,7 +4,7 @@ import numpy as np
 import seaborn
 from matplotlib import pyplot as plt
 
-from PPOROS.plotting.utils import get_paths, load_data, get_line_styles
+from PROPS.plotting.utils import get_paths, load_data, get_line_styles
 
 
 def plot(save_dict, name, m=100000, success_threshold=None):
