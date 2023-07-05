@@ -48,7 +48,8 @@ Data and plotting scripts for the NeurIPS 2023 submission are in `plotting/neuri
 ```commandline
 conda create -n props python=3.9
 conda activate props
-pip install -e PROPS
+cd PPOROS
+pip install -e .
 
 cd PROPS/plotting/neurips
 tar xzvf data.tar.gz
