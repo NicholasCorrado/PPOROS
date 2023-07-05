@@ -3,7 +3,7 @@ import os
 import seaborn
 from matplotlib import pyplot as plt
 
-from PPOROS.plotting.utils import get_paths, plot
+from PROPS.plotting.utils import get_paths, plot
 
 PROPS_PATHS = {
     'Swimmer-v4': {

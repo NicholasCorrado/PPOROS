@@ -4,7 +4,7 @@ import numpy as np
 import seaborn
 from matplotlib import pyplot as plt
 
-from PPOROS.plotting.utils import get_paths
+from PROPS.plotting.utils import get_paths
 
 
 def load_data(path, successes=False, success_threshold=None):

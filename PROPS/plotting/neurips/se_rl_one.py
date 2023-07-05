@@ -4,10 +4,7 @@ import numpy as np
 import seaborn
 from matplotlib import pyplot as plt
 
-from PPOROS.hyperparams.ppo import PPO_PARAMS
-from PPOROS.hyperparams.ppo_buffer import PPOBUFFER_PARAMS
-from PPOROS.plotting.ppo import BEST_PPO_PARAMS
-from PPOROS.plotting.utils import get_paths, load_data, plot, get_line_styles
+from PROPS.plotting.utils import get_paths, load_data, plot, get_line_styles
 
 ylims = {
     'Hopper-v4': (0, 4000),
