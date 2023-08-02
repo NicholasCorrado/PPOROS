@@ -57,8 +57,8 @@ def parse_args():
                         help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
 
     # General training parameters (both PROPS and PPO)
-    parser.add_argument("--env-id", type=str, default="MinAtar/SpaceInvaders-v0", help="Environment id")
-    parser.add_argument("--num-envs", type=int, default=4, help="Number of parallel environments")
+    parser.add_argument("--env-id", type=str, default="CartPole-v1", help="Environment id")
+    parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="Number of timesteps to train")
     parser.add_argument("--seed", type=int, default=0, help="Seed of the experiment")
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
@@ -71,7 +71,7 @@ def parse_args():
                         help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
     parser.add_argument("--buffer-batches", "-b", type=int, default=1,
                         help="Number of PPO target batches to store in the replay buffer (b in paper)")
-    parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="PPO Adam optimizer learning rate")
+    parser.add_argument("--learning-rate", "-lr", type=float, default=1e-3, help="PPO Adam optimizer learning rate")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Toggle learning rate annealing for PPO policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor gamma")
@@ -93,13 +93,13 @@ def parse_args():
                         help="Target/cutoff KL divergence threshold for PPO update")
 
     # PROPS/ROS hyperparameters
-    parser.add_argument("--props", type=int, default=0,
+    parser.add_argument("--props", type=int, default=1,
                         help="If True, use PROPS to collect data, otherwise use on-policy sampling")
     parser.add_argument("--ros", type=int, default=0,
                         help="If True, use ROS to collect data, otherwise use on-policy sampling")
-    parser.add_argument("--props-num-steps", type=int, default=512,
+    parser.add_argument("--props-num-steps", type=int, default=128,
                         help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-4,
+    parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-3,
                         help="PROPS Adam optimizer learning rate")
     parser.add_argument("--props-anneal-lr", type=lambda x: bool(strtobool(x)), default=0, nargs="?", const=False,
                         help="Toggle learning rate annealing for PROPS policy")
@@ -107,10 +107,10 @@ def parse_args():
                         help="Surrogate clipping coefficient \epsilon_PROPS for PROPS")
     parser.add_argument("--props-max-grad-norm", type=float, default=0.5,
                         help="Maximum norm for gradient clipping for PROPS update")
-    parser.add_argument("--props-num-minibatches", type=int, default=16,
+    parser.add_argument("--props-num-minibatches", type=int, default=4,
                         help="Number of minibatches updates for PROPS update")
-    parser.add_argument("--props-update-epochs", type=int, default=16, help="Number of epochs for PROPS update")
-    parser.add_argument("--props-target-kl", type=float, default=0.05,
+    parser.add_argument("--props-update-epochs", type=int, default=4, help="Number of epochs for PROPS update")
+    parser.add_argument("--props-target-kl", type=float, default=0.1,
                         help="Target/cutoff KL divergence threshold for PROPS update")
     parser.add_argument("--props-lambda", type=float, default=0.3, help="Regularization coefficient for PROPS update")
     parser.add_argument("--props-adv", type=int, default=False, help="If True, the PROPS update is weighted using the absolute advantage |A(s,a)|")
@@ -294,7 +294,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     return ppo_stats
 
 
-def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, advantages, global_step, args, writer, means, stds):
+def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, advantages, global_step, args, writer, logits):
     # PROPS UPDATE
 
     if global_step <= args.buffer_size - args.props_num_steps:
@@ -311,8 +311,8 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
     b_obs = obs[start:end].reshape((-1,) + envs.single_observation_space.shape)
     b_logprobs = logprobs[start:end].reshape(-1)
     b_actions = actions[start:end].reshape((-1,) + envs.single_action_space.shape)
-    means = means[start:end]  # mean action for PPO policy
-    stds = stds[start:end]  # std for PPO policy
+    # b_logits = logits[start:end].reshape(-1)  # action logits for PPO policy
+    b_probs = np.exp(logprobs)
 
     if args.props_adv:
         b_advantages = advantages[start:end].reshape(-1)
@@ -337,6 +337,9 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
             mb_inds = b_inds[start:end]
             mb_obs = b_obs[mb_inds]
             mb_actions = b_actions[mb_inds]
+            mb_probs = b_probs[mb_inds]
+            mb_logprobs = b_logprobs[mb_inds]
+
             if args.props_adv:
                 # Do not zero-center advantages; we need to preserve A(s,a) = 0 for AW-PROPS
                 mb_advantages = b_advantages[mb_inds]
@@ -344,8 +347,8 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
                 mb_abs_advantages = torch.abs(mb_advantages)
                 # print(torch.mean(mb_abs_advantages), torch.std(mb_abs_advantages))
 
-            _, _, props_logprob, entropy = agent_props.get_action_and_info(mb_obs, mb_actions)
-            props_logratio = props_logprob - b_logprobs[mb_inds]
+            _, _, props_logprobs, entropy = agent_props.get_action_and_info(mb_obs, mb_actions)
+            props_logratio = props_logprobs - b_logprobs[mb_inds]
             props_ratio = props_logratio.exp()
 
             with torch.no_grad():
@@ -360,10 +363,7 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
                         break
                 approx_kl_to_log = approx_kl
 
-            mu2 = means[mb_inds]
-            sigma2 = stds[mb_inds]
-            kl_regularizer_loss = (torch.log(sigma2 / sigma1) + (sigma1 ** 2 + (mu1 - mu2) ** 2) / (
-                        2 * sigma2 ** 2) - 0.5).mean()
+            kl_regularizer_loss = (mb_probs*(mb_logprobs - props_logprobs)).mean()
 
             pg_loss1 = props_ratio
             pg_loss2 = torch.clamp(props_ratio, 1 - args.props_clip_coef, 1 + args.props_clip_coef)
@@ -402,7 +402,7 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
             'props_clip_frac': float(np.mean(clipfracs)),
             'props_grad_norm': float(np.mean(grad_norms)),
             'props_num_update_minibatches': num_update_minibatches,
-            'props_kl_regularizer_loss': float(kl_regularizer_loss.item()),
+            # 'props_kl_regularizer_loss': float(kl_regularizer_loss.item()),
             'props_approx_kl': float(approx_kl_to_log.item()),
         }
         if args.track:
@@ -413,7 +413,7 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
             writer.add_scalar("props/grad_norm", np.mean(grad_norms), global_step)
             writer.add_scalar("props/policy_loss", pg_loss.item(), global_step)
             writer.add_scalar("props/entropy", entropy_loss.item(), global_step)
-            writer.add_scalar("props/kl_regularizer_loss", kl_regularizer_loss.item(), global_step)
+            # writer.add_scalar("props/kl_regularizer_loss", kl_regularizer_loss.item(), global_step)
             writer.add_scalar("props/approx_kl", approx_kl_to_log, global_step)
     return props_stats
 
@@ -654,9 +654,9 @@ def main():
                 if info is None:
                     continue
 
-                if args.track:
-                    writer.add_scalar("charts/props_train_ret", info["episode"]["r"], global_step)
-                    writer.add_scalar("charts/episode_length", info["episode"]["l"], global_step)
+                # if args.track:
+                #     writer.add_scalar("charts/props_train_ret", info["episode"]["r"], global_step)
+                #     writer.add_scalar("charts/episode_length", info["episode"]["l"], global_step)
 
         # Reorder the replay buffer from youngest to oldest so we can reuse cleanRL's code to compute advantages
         if global_step < args.buffer_size:
@@ -670,7 +670,7 @@ def main():
 
         # Recompute logprobs of all (s,a) in the replay buffer before every update, since they change after every update.
         with torch.no_grad():
-            _, action_probs, new_logprob, _, new_value = agent.get_action_and_value(obs, actions)
+            _, logits, new_logprob, _, new_value = agent.get_action_and_value(obs, actions)
             values = new_value.reshape(-1, envs.num_envs)
             logprobs = new_logprob.reshape(-1, envs.num_envs)
 
@@ -747,7 +747,7 @@ def main():
 
             # perform props behavior update and log stats
             props_stats = update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, advantages, global_step, args,
-                                       writer, means, stds)
+                                       writer, logits)
 
         # Evaluate agent performance
         if global_step % (args.num_steps * args.eval_freq) == 0:

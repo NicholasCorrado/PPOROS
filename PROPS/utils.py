@@ -279,7 +279,7 @@ class AgentDiscrete(nn.Module):
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return action, probs, probs.log_prob(action), probs.entropy(), self.critic(x),
+        return action, probs.log_prob(action), probs.log_prob(action), probs.entropy(), self.critic(x),
 
     def get_action(self, x, noise=False):
         logits = self.actor(x)
@@ -295,7 +295,7 @@ class AgentDiscrete(nn.Module):
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return action, probs, probs.log_prob(action), probs.entropy()
+        return action, probs.log_prob(action), probs.log_prob(action), probs.entropy()
 
     def sample_actions(self, x):
         logits = self.actor(x)
