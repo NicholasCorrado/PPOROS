@@ -190,7 +190,7 @@ def parse_args():
                         help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="Hopper-v4",
+    parser.add_argument("--env-id", type=str, default="Ant-v4",
         help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=1000000,
         help="total timesteps of the experiments")
@@ -208,6 +208,8 @@ def parse_args():
         help="the learning rate of the policy network optimizer")
     parser.add_argument("--q-lr", type=float, default=1e-3,
         help="the learning rate of the Q network network optimizer")
+    parser.add_argument("--anneal-lr", type=int, default=0,
+        help="the replay memory buffer size")
     parser.add_argument("--policy-frequency", type=int, default=2,
         help="the frequency of training policy (delayed)")
     parser.add_argument("--target-network-frequency", type=int, default=1, # Denis Yarats' implementation delays this by 2.
@@ -425,6 +427,13 @@ if __name__ == "__main__":
 
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
+
+            if args.anneal_lr:
+                frac = 1.0 - (global_step - 1.0) / args.total_timesteps
+                lrnow = frac * args.policy_lr
+                actor_optimizer.param_groups[0]["lr"] = lrnow
+                lrnow = frac * args.q_lr
+                q_optimizer.param_groups[0]["lr"] = lrnow
             data = rb.sample(args.batch_size)
             with torch.no_grad():
                 next_state_actions, next_state_log_pi, _ = actor.get_action(data.next_observations)
