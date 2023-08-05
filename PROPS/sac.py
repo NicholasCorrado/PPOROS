@@ -17,7 +17,7 @@ import yaml
 from stable_baselines3.common.buffers import ReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
 
-from PROPS.utils import Evaluate, get_latest_run_id
+from utils import Evaluate, get_latest_run_id
 
 
 class Evaluate:
