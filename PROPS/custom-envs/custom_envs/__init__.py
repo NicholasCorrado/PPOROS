@@ -27,6 +27,6 @@ register(
     entry_point="custom_envs.envs.bandit:BanditEnv",
     max_episode_steps=1,
     kwargs={
-        'n': 100
+        'n': 1000
     }
 )
