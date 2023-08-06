@@ -12,3 +12,9 @@ register(
     entry_point="custom_envs.envs.goal2d:Goal2DEnv",
     max_episode_steps=100,
 )
+
+register(
+    id="Bandit-v0",
+    entry_point="custom_envs.envs.bandit:BanditEnv",
+    max_episode_steps=1,
+)
