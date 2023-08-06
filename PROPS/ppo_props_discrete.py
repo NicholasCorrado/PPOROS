@@ -8,8 +8,8 @@ from collections import defaultdict, deque
 from distutils.util import strtobool
 
 import gymnasium as gym
-# import custom_envs
-import minatar
+import custom_envs
+# import minatar
 import numpy as np
 import torch
 import torch.nn as nn
@@ -57,7 +57,7 @@ def parse_args():
                         help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
 
     # General training parameters (both PROPS and PPO)
-    parser.add_argument("--env-id", type=str, default="CartPole-v1", help="Environment id")
+    parser.add_argument("--env-id", type=str, default="Bandit-v0", help="Environment id")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="Number of timesteps to train")
     parser.add_argument("--seed", type=int, default=0, help="Seed of the experiment")
@@ -67,11 +67,11 @@ def parse_args():
                         help="If toggled, cuda will be enabled by default")
 
     # PPO hyperparameters
-    parser.add_argument("--num-steps", type=int, default=512,
+    parser.add_argument("--num-steps", type=int, default=64,
                         help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
     parser.add_argument("--buffer-batches", "-b", type=int, default=1,
                         help="Number of PPO target batches to store in the replay buffer (b in paper)")
-    parser.add_argument("--learning-rate", "-lr", type=float, default=1e-3, help="PPO Adam optimizer learning rate")
+    parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="PPO Adam optimizer learning rate")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Toggle learning rate annealing for PPO policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor gamma")
@@ -97,7 +97,7 @@ def parse_args():
                         help="If True, use PROPS to collect data, otherwise use on-policy sampling")
     parser.add_argument("--ros", type=int, default=0,
                         help="If True, use ROS to collect data, otherwise use on-policy sampling")
-    parser.add_argument("--props-num-steps", type=int, default=128,
+    parser.add_argument("--props-num-steps", type=int, default=32,
                         help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
     parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-3,
                         help="PROPS Adam optimizer learning rate")
@@ -557,9 +557,6 @@ def main():
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only continuous action space is supported"
     env_reward_normalize = envs.envs[0].env
     env_obs_normalize = envs.envs[0].env.env.env
-    # for convenience
-    obs_dim = envs.single_observation_space.shape[0]
-    action_dim = envs.single_action_space.n
 
     # PPO target agent
     agent = AgentDiscrete(envs).to(args.device)
@@ -717,6 +714,9 @@ def main():
                     writer.add_scalar("charts/diff_kl_mle_target", sampling_error_logs[f'diff_kl_mle_target'][-1],
                                       global_step)
 
+        if args.track:
+            best_arm_count = (actions_buffer.detach().numpy() == 999).sum()
+            writer.add_scalar("charts/best_arm_count", best_arm_count, global_step)
 
         # PPO update
         if global_step % args.num_steps == 0 and args.update_epochs > 0:
@@ -734,7 +734,7 @@ def main():
                                    global_step, writer)
 
         # PROPS update
-        if args.props and global_step % args.props_num_steps == 0:  # and global_step > 25000:
+        if args.props and global_step > args.buffer_size and global_step % args.props_num_steps == 0:  # and global_step > 25000:
             # Annealing learning rate
             if args.props_anneal_lr:
                 frac = 1.0 - (props_update - 1.0) / num_props_updates

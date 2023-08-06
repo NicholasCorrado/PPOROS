@@ -14,7 +14,7 @@ class BanditEnv(gym.Env):
 
         self.means = np.random.uniform(0, 0.9, self.n)
         self.stds = np.random.uniform(0, 1, self.n)
-        self.means[0] = 1
+        self.means[-1] = 1
 
     def step(self, a):
 
