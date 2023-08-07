@@ -24,7 +24,7 @@ class BanditEnv(gym.Env):
         terminated = True
         truncated = False
         info = {}
-        return np.array([0]), reward, terminated, truncated, info
+        return np.array([1]), reward, terminated, truncated, info
 
     def reset(
         self,
@@ -32,4 +32,4 @@ class BanditEnv(gym.Env):
         seed: Optional[int] = None,
         options: Optional[dict] = None,
     ):
-        return np.array([0]), {}
+        return np.array([1]), {}
