@@ -57,10 +57,10 @@ def parse_args():
                         help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
 
     # General training parameters (both PROPS and PPO)
-    parser.add_argument("--env-id", type=str, default="Bandit-v0", help="Environment id")
+    parser.add_argument("--env-id", type=str, default="Bandit1000-v0", help="Environment id")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="Number of timesteps to train")
-    parser.add_argument("--seed", type=int, default=0, help="Seed of the experiment")
+    parser.add_argument("--seed", type=int, default=None, help="Seed of the experiment")
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="If toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
@@ -714,6 +714,8 @@ def main():
                     writer.add_scalar("charts/diff_kl_mle_target", sampling_error_logs[f'diff_kl_mle_target'][-1],
                                       global_step)
 
+        # best_arm_count = (actions_buffer.detach().numpy() == 999).sum()
+        # print('best arm count:', best_arm_count, )
         if args.track:
             best_arm_count = (actions_buffer.detach().numpy() == 999).sum()
             writer.add_scalar("charts/best_arm_count", best_arm_count, global_step)
@@ -734,7 +736,7 @@ def main():
                                    global_step, writer)
 
         # PROPS update
-        if args.props and global_step > args.buffer_size and global_step % args.props_num_steps == 0:  # and global_step > 25000:
+        if args.props and global_step % args.props_num_steps == 0:  # and global_step > 25000:
             # Annealing learning rate
             if args.props_anneal_lr:
                 frac = 1.0 - (props_update - 1.0) / num_props_updates
