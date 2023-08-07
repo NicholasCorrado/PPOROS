@@ -77,7 +77,7 @@ def parse_args():
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95,
                         help="General advantage estimation lambda (not the lambda used for PROPS")
-    parser.add_argument("--num-minibatches", type=int, default=32, help="Number of minibatches updates for PPO update")
+    parser.add_argument("--num-minibatches", type=int, default=4, help="Number of minibatches updates for PPO update")
     parser.add_argument("--update-epochs", type=int, default=4, help="Number of epochs for PPO update")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Toggles advantages normalization for PPO update")
