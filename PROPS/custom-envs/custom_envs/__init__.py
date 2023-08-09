@@ -30,3 +30,13 @@ register(
         'n': 1000
     }
 )
+
+for n in [10, 50, 100]:
+    register(
+        id=f"Discrete2D{n}-v0",
+        entry_point="custom_envs.envs.discrete2d:Discrete2DEnv",
+        max_episode_steps=50,
+        kwargs={
+            'n': n
+        }
+    )
