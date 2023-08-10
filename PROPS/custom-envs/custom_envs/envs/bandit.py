@@ -12,8 +12,10 @@ class BanditEnv(gym.Env):
         self.observation_space = gym.spaces.Box(low=0, high=1)
         super().__init__()
 
-        self.means = np.random.uniform(0, 0.9, self.n)
+        self.means = np.random.uniform(0, 0.95, self.n)
         self.stds = np.random.uniform(0, 1, self.n)
+        self.means = np.array([0.6, 0.7, 0.8, 0.9, 1])
+        self.stds[:] = 0.5
         self.means[-1] = 1
         self.stds[-1] = 1
 
