@@ -70,9 +70,6 @@ def plot(save_dict, name, m=100000, success_threshold=None, return_cutoff=-np.in
         for path in paths:
             u, t, avg = load_data(path, name=name, success_threshold=success_threshold)
             if avg is not None:
-                # print(len(avg))
-                # if len(avg) < 50:
-                #     continue
                 if max_t:
                     cutoff = np.where(t <= max_t/x_scale)[0]
                     avg = avg[cutoff]
@@ -102,73 +99,51 @@ def plot(save_dict, name, m=100000, success_threshold=None, return_cutoff=-np.in
                 for i in range(len(avgs)):
                     avgs[i] = avgs[i][:min_l]
 
-            avg_of_avgs = np.average(avgs, axis=0)
+            avg_of_avgs = np.mean(avgs, axis=0)
+
             # if avg_of_avgs.mean() > 0: continue
             # print(np.median(avg_of_avgs))
             # if np.median(avg_of_avgs) > 0: continue
 
             std = np.std(avgs, axis=0)
             N = len(avgs)
-            ci = 1 * std / np.sqrt(N)
-            q05 = avg_of_avgs + ci
-            q95 = avg_of_avgs - ci
+            ci = 1 * std / np.sqrt(N) * 1.96
+            q05 = avg_of_avgs - ci
+            q95 = avg_of_avgs + ci
 
         style_kwargs = get_line_styles(agent)
         style_kwargs['linewidth'] = 2
 
-
-        x = t_good * x_scale
-
-        # t = None
-        if t is None:
-            x = np.arange(len(avg_of_avgs))
-
         style_kwargs['linewidth'] = 1.5
 
-        if 'PROPS' == agent:
+        if 'PROPS' in agent:
             style_kwargs['linestyle'] = '-'
             style_kwargs['linewidth'] = 3
-            # if 'no' in agent:
-            #     style_kwargs['linestyle'] = ':'
-            #     style_kwargs['linewidth'] = 3
 
         elif 'ppo_buffer' in agent or 'PPO-Buffer' in agent or 'b=' in agent or 'Buffer' in agent:
-            # x = x/float(agent[-1])
             style_kwargs['linestyle'] = '--'
-            # style_kwargs['linestyle'] = 'None'
         elif 'ppo,' in agent or 'PPO,' in agent or 'PPO with' in agent or 'PPO' == agent:
-            # x = x/float(agent[-1])
-            # style_kwargs['color'] = 'k'
             style_kwargs['linestyle'] = ':'
         elif 'Priv' in agent:
             style_kwargs['linestyle'] = '-.'
-            # style_kwargs['color'] = 'k'
 
-         # else:
-        #     style_kwargs['linestyle'] = 'None'
+        elif '0.0001' in agent:
+            style_kwargs['linestyle'] = '--'
 
+        print(agent, avg_of_avgs[-1], q05[-1], q95[-1])
 
-        # if 'ROS' in agent:
-        #     style_kwargs['color']='k'
-        #
-        # if 'x2' in agent:
-        #     style_kwargs['color'] = palette[0]
-        # if 'x4' in agent:
-        #     style_kwargs['color'] = palette[1]
-        # if 'x8' in agent:
-        #     style_kwargs['color'] = palette[2]
-        # if 'x16' in agent:
-        #     style_kwargs['color'] = palette[3]
-
-        if m:
-            x = x[:m]
-            avg_of_avgs = avg_of_avgs[:m]
-            q05 = q05[:m]
-            q95 = q95[:m]
-
-        l = len(avg_of_avgs)
-        print(l)
-        print(np.mean(avg_of_avgs), np.median(avg_of_avgs))
+        try:
+            times = info['times']
+            x = times
+        except:
+            x = t_good * x_scale
+            if t is None:
+                x = np.arange(len(avg_of_avgs))
+            if m:
+                x = x[:m]
+                avg_of_avgs = avg_of_avgs[:m]
+                q05 = q05[:m]
+                q95 = q95[:m]
         plt.plot(x[:l], avg_of_avgs, label=agent, **style_kwargs)
         if style_kwargs['linestyle'] == 'None':
             plt.fill_between(x[:l], q05, q95, alpha=0)
@@ -236,3 +211,30 @@ def get_plot_data(paths):
 
     return t, avg_of_avgs, ci
 
+def get_times(save_dict):
+    print(os.getcwd())
+
+    time_dict = {}
+    for agent, info in save_dict.items():
+        paths = info['paths']
+        times = []
+        for path in paths:
+            with np.load(path, allow_pickle=True) as data:
+                time = data['times']
+                time = np.insert(time, 0, 0)
+            if time is not None:
+                times.append(time)
+
+        if len(times) == 0:
+            continue
+        elif len(times) == 1:
+            avg_time = time
+        else:
+            avg_time = np.mean(times, axis=0)
+            std_time = np.std(times, axis=0)
+
+
+
+        time_dict[agent] = (avg_time, std_time)
+
+    return time_dict

@@ -50,7 +50,7 @@ def plot(save_dict, use_successes, updates=True, m=None, max_t=None, success_thr
             avg_of_avgs = np.average(avgs, axis=0)
             std = np.std(avgs, axis=0)
             N = len(avgs)
-            ci = std / np.sqrt(N)
+            ci = std / np.sqrt(N) * 1.96
             q05 = avg_of_avgs - ci
             q95 = avg_of_avgs + ci
 

@@ -1,0 +1,11 @@
+WARNING: There was an error checking the latest version of pip.
+/var/lib/condor/execute/slot1/dir_5039/PPOROS/ppo-ros_env/lib/python3.9/site-packages/numpy/core/fromnumeric.py:3432: RuntimeWarning: Mean of empty slice.
+  return _methods._mean(a, axis=axis, dtype=dtype,
+/var/lib/condor/execute/slot1/dir_5039/PPOROS/ppo-ros_env/lib/python3.9/site-packages/numpy/core/_methods.py:190: RuntimeWarning: invalid value encountered in double_scalars
+  ret = ret.dtype.type(ret / rcount)
+/var/lib/condor/execute/slot1/dir_5039/PPOROS/ppo-ros_env/lib/python3.9/site-packages/numpy/core/_methods.py:265: RuntimeWarning: Degrees of freedom <= 0 for slice
+  ret = _var(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/var/lib/condor/execute/slot1/dir_5039/PPOROS/ppo-ros_env/lib/python3.9/site-packages/numpy/core/_methods.py:223: RuntimeWarning: invalid value encountered in divide
+  arrmean = um.true_divide(arrmean, div, out=arrmean, casting='unsafe',
+/var/lib/condor/execute/slot1/dir_5039/PPOROS/ppo-ros_env/lib/python3.9/site-packages/numpy/core/_methods.py:257: RuntimeWarning: invalid value encountered in double_scalars
+  ret = ret.dtype.type(ret / rcount)

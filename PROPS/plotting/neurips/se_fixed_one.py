@@ -1,3 +1,4 @@
+import itertools
 import os
 
 import numpy as np
@@ -25,6 +26,7 @@ def plot(save_dict, use_successes, updates=True, m=None, max_t=None, success_thr
     i = 0
 
     print(os.getcwd())
+    palette = itertools.cycle(seaborn.color_palette())
 
     for agent, info in save_dict.items():
         paths = info['paths']
@@ -56,22 +58,35 @@ def plot(save_dict, use_successes, updates=True, m=None, max_t=None, success_thr
             q95 = avg_of_avgs + ci
 
         style_kwargs = {'linewidth': 1.5}
+        color = None
         if 'PPO' in agent:
             style_kwargs['color'] = 'k'
             style_kwargs['linestyle'] = ':'
             style_kwargs = {'linewidth': 1.5}
 
-        if 'PROPS' in agent:
+        if 'PROPS' == agent:
             style_kwargs['color'] = 'k'
             style_kwargs['linestyle'] = ':'
-            style_kwargs = {'linewidth': 3}
+            style_kwargs = {
+                'linewidth': 3,
+            }
+
+        if 'PROPS, no clip, no reg' in agent:
+            style_kwargs['color'] = 'k'
+            style_kwargs['linestyle'] = ':'
+            color = next(palette)
+            style_kwargs = {
+                'linewidth': 3,
+                'linestyle': '--',
+                # 'color': next(palette)
+            }
 
         if 'Buffer' in agent:
             style_kwargs['linestyle'] = '--'
 
-        plt.plot(t, avg_of_avgs, label=agent, **style_kwargs)
+        plt.plot(t, avg_of_avgs, label=agent, **style_kwargs, color=color)
         print(f'{agent}, {q05[1]:.3f}, {q95[1]:.3f}')
-        plt.fill_between(t, q05, q95, alpha=0.2)
+        plt.fill_between(t, q05, q95, alpha=0.2, color=color)
 
         i += 1
 
@@ -84,7 +99,7 @@ if __name__ == "__main__":
 
     for policy in ['expert', 'random']:
         subplot_i = 1
-        fig = plt.figure(figsize=(1* 3, 3))
+        fig = plt.figure(figsize=(1* 3.7, 3.7))
 
         for env_id in env_ids:
             path_dict_all = {}
@@ -105,6 +120,15 @@ if __name__ == "__main__":
             algo = 'ppo_ros'
             path_dict_aug = get_paths(
                 results_dir=f'{root_dir}/{algo}/{policy}/b_16/s_1024/s_256/lr_{lr}/l_{l}/kl_0.05',
+                key=key,
+                x_scale=1 / 256,
+                evaluations_name='stats')
+            path_dict_all.update(path_dict_aug)
+
+            key = rf'PROPS, no clip, no reg'
+            algo = 'ppo_ros'
+            path_dict_aug = get_paths(
+                results_dir=f'data/se_fixed_ablation/results/{env_id}/{algo}/{policy}/b_16/no_clip_lambda',
                 key=key,
                 x_scale=1 / 256,
                 evaluations_name='stats')
@@ -136,8 +160,12 @@ if __name__ == "__main__":
             plt.xticks(fontsize=12, ticks=[32, 64, 96, 128,])
             plt.yticks(fontsize=12)
             plt.yscale('log')
-            plt.legend()
             plt.tight_layout()
+            fig.subplots_adjust(top=0.72)
+            ax = fig.axes[0]
+            handles, labels = ax.get_legend_handles_labels()
+            fig.legend(handles, labels, loc='upper center', ncol=2, fontsize=12)
+            # plt.legend()
 
             subplot_i += 1
 
