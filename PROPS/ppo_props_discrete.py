@@ -45,9 +45,9 @@ def parse_args():
 
     # Saving and logging parameters
     parser.add_argument("--log-stats", type=int, default=1, help="If true, training statistics are logged")
-    parser.add_argument("--eval-freq", type=int, default=1,
+    parser.add_argument("--eval-freq", type=int, default=20,
                         help="Evaluate PPO and/or PROPS policy every eval_freq PPO updates")
-    parser.add_argument("--eval-episodes", type=int, default=20,
+    parser.add_argument("--eval-episodes", type=int, default=50,
                         help="Number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results",
                         help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
@@ -57,9 +57,9 @@ def parse_args():
                         help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
 
     # General training parameters (both PROPS and PPO)
-    parser.add_argument("--env-id", type=str, default="Bandit1000-v0", help="Environment id")
+    parser.add_argument("--env-id", type=str, default="Discrete2D100-v0", help="Environment id")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
-    parser.add_argument("--total-timesteps", type=int, default=1000000, help="Number of timesteps to train")
+    parser.add_argument("--total-timesteps", type=int, default=500000, help="Number of timesteps to train")
     parser.add_argument("--seed", type=int, default=None, help="Seed of the experiment")
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="If toggled, `torch.backends.cudnn.deterministic=False`")
@@ -67,17 +67,17 @@ def parse_args():
                         help="If toggled, cuda will be enabled by default")
 
     # PPO hyperparameters
-    parser.add_argument("--num-steps", type=int, default=64,
+    parser.add_argument("--num-steps", type=int, default=1024,
                         help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
     parser.add_argument("--buffer-batches", "-b", type=int, default=1,
                         help="Number of PPO target batches to store in the replay buffer (b in paper)")
-    parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="PPO Adam optimizer learning rate")
+    parser.add_argument("--learning-rate", "-lr", type=float, default=3e-4, help="PPO Adam optimizer learning rate")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Toggle learning rate annealing for PPO policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95,
                         help="General advantage estimation lambda (not the lambda used for PROPS")
-    parser.add_argument("--num-minibatches", type=int, default=4, help="Number of minibatches updates for PPO update")
+    parser.add_argument("--num-minibatches", type=int, default=32, help="Number of minibatches updates for PPO update")
     parser.add_argument("--update-epochs", type=int, default=4, help="Number of epochs for PPO update")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Toggles advantages normalization for PPO update")
@@ -97,7 +97,7 @@ def parse_args():
                         help="If True, use PROPS to collect data, otherwise use on-policy sampling")
     parser.add_argument("--ros", type=int, default=0,
                         help="If True, use ROS to collect data, otherwise use on-policy sampling")
-    parser.add_argument("--props-num-steps", type=int, default=32,
+    parser.add_argument("--props-num-steps", type=int, default=256,
                         help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
     parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-3,
                         help="PROPS Adam optimizer learning rate")
@@ -107,12 +107,12 @@ def parse_args():
                         help="Surrogate clipping coefficient \epsilon_PROPS for PROPS")
     parser.add_argument("--props-max-grad-norm", type=float, default=0.5,
                         help="Maximum norm for gradient clipping for PROPS update")
-    parser.add_argument("--props-num-minibatches", type=int, default=4,
+    parser.add_argument("--props-num-minibatches", type=int, default=16,
                         help="Number of minibatches updates for PROPS update")
     parser.add_argument("--props-update-epochs", type=int, default=4, help="Number of epochs for PROPS update")
     parser.add_argument("--props-target-kl", type=float, default=0.1,
                         help="Target/cutoff KL divergence threshold for PROPS update")
-    parser.add_argument("--props-lambda", type=float, default=0.3, help="Regularization coefficient for PROPS update")
+    parser.add_argument("--props-lambda", type=float, default=0.1, help="Regularization coefficient for PROPS update")
     parser.add_argument("--props-adv", type=int, default=False, help="If True, the PROPS update is weighted using the absolute advantage |A(s,a)|")
     parser.add_argument("--props-eval", type=int, default=False,
                         help="If set, the PROPS policy is evaluated every props_eval ")
