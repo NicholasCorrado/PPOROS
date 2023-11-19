@@ -200,6 +200,8 @@ def parse_args():
         help="the discount factor gamma")
     parser.add_argument("--tau", type=float, default=0.005,
         help="target smoothing coefficient (default: 0.005)")
+    parser.add_argument("--hidden-dims", type=int, default=256,
+        help="size of hidden layers in actor/critic networks")
     parser.add_argument("--batch-size", type=int, default=256,
         help="the batch size of sample from the reply memory")
     parser.add_argument("--learning-starts", type=int, default=5e3,
@@ -265,11 +267,11 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 
 # ALGO LOGIC: initialize agent here:
 class SoftQNetwork(nn.Module):
-    def __init__(self, env):
+    def __init__(self, env, hidden_dims=256):
         super().__init__()
-        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod() + np.prod(env.single_action_space.shape), 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, 1)
+        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod() + np.prod(env.single_action_space.shape), hidden_dims)
+        self.fc2 = nn.Linear(hidden_dims, hidden_dims)
+        self.fc3 = nn.Linear(hidden_dims, 1)
 
     def forward(self, x, a):
         x = torch.cat([x, a], 1)
@@ -284,12 +286,12 @@ LOG_STD_MIN = -5
 
 
 class Actor(nn.Module):
-    def __init__(self, env):
+    def __init__(self, env, hidden_dims=256):
         super().__init__()
-        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod(), 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc_mean = nn.Linear(64, np.prod(env.single_action_space.shape))
-        self.fc_logstd = nn.Linear(64, np.prod(env.single_action_space.shape))
+        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod(), hidden_dims)
+        self.fc2 = nn.Linear(hidden_dims, hidden_dims)
+        self.fc_mean = nn.Linear(hidden_dims, np.prod(env.single_action_space.shape))
+        self.fc_logstd = nn.Linear(hidden_dims, np.prod(env.single_action_space.shape))
         # action rescaling
         self.register_buffer(
             "action_scale", torch.tensor((env.action_space.high - env.action_space.low) / 2.0, dtype=torch.float32)
@@ -359,11 +361,11 @@ if __name__ == "__main__":
 
     max_action = float(envs.single_action_space.high[0])
 
-    actor = Actor(envs).to(device)
-    qf1 = SoftQNetwork(envs).to(device)
-    qf2 = SoftQNetwork(envs).to(device)
-    qf1_target = SoftQNetwork(envs).to(device)
-    qf2_target = SoftQNetwork(envs).to(device)
+    actor = Actor(envs, args.hidden_dims).to(device)
+    qf1 = SoftQNetwork(envs, args.hidden_dims).to(device)
+    qf2 = SoftQNetwork(envs, args.hidden_dims).to(device)
+    qf1_target = SoftQNetwork(envs, args.hidden_dims).to(device)
+    qf2_target = SoftQNetwork(envs, args.hidden_dims).to(device)
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
     q_optimizer = optim.Adam(list(qf1.parameters()) + list(qf2.parameters()), lr=args.q_lr)
