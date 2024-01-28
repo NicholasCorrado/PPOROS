@@ -13,6 +13,11 @@ register(
     max_episode_steps=2,
 )
 
+register(
+    id="GridWorld-v0",
+    entry_point="custom_envs.envs.gridworld:GridWorldEnv",
+    max_episode_steps=100,
+)
 
 register(
     id="Goal2D-v0",
