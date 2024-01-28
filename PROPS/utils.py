@@ -256,15 +256,20 @@ class AgentDiscrete(nn.Module):
             activation_fn = nn.Tanh
 
         super().__init__()
+        if isinstance(envs.single_observation_space, gym.spaces.Box):
+            input_dim = np.array(envs.single_observation_space.shape).prod()
+        else:
+            input_dim = np.array(envs.single_observation_space.n)
+
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+            layer_init(nn.Linear(input_dim, 64)),
             activation_fn(),
             layer_init(nn.Linear(64, 64)),
             activation_fn(),
             layer_init(nn.Linear(64, 1), std=1.0),
         )
         self.actor = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+            layer_init(nn.Linear(input_dim, 64)),
             activation_fn(),
             layer_init(nn.Linear(64, 64)),
             activation_fn(),

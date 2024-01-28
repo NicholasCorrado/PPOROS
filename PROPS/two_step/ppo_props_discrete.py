@@ -8,6 +8,8 @@ from collections import defaultdict, deque
 from distutils.util import strtobool
 
 import gymnasium as gym
+from torch.distributions import Categorical
+
 import custom_envs
 # import minatar
 import numpy as np
@@ -16,15 +18,8 @@ import torch.nn as nn
 import torch.optim as optim
 import yaml
 
-from PROPS.utils import Evaluate, AgentDiscrete, EvaluateDiscrete
-from PROPS.utils import get_latest_run_id, make_env, Agent
-
-def make_env(env_id, seed, idx, capture_video, run_name):
-    def thunk():
-        env = gym.make(env_id)
-        return env
-
-    return thunk
+from PROPS.ppo_props_discrete import update_ppo, update_props
+from PROPS.utils import layer_init, EvaluateDiscrete, get_latest_run_id
 
 
 def parse_args():
@@ -118,7 +113,7 @@ def parse_args():
                         help="If set, the PROPS policy is evaluated every props_eval ")
 
     # Sampling error (se)
-    parser.add_argument("--se", type=int, default=0,
+    parser.add_argument("--se", type=int, default=1,
                         help="If True, sampling error is computed every se_freq PPO updates.")
     parser.add_argument("--se-ref", type=int, default=0,
                         help="If True, on-policy sampling error is computed using the PPO policy sequence obtained while using PROPS. Only applies if se is True.")
@@ -126,7 +121,7 @@ def parse_args():
                         help="Adam optimizer learning rate used to compute the empirical (maximum likelihood) policy in sampling error computation.")
     parser.add_argument("--se-epochs", type=int, default=250,
                         help="Number of epochs to compute empirical (maximum likelihood) policy.")
-    parser.add_argument("--se-freq", type=int, default=None, help="Compute sampling error very se_freq PPO updates")
+    parser.add_argument("--se-freq", type=int, default=1, help="Compute sampling error very se_freq PPO updates")
 
     # loading pretrained models
     parser.add_argument("--policy-path", type=str, default=None, help="Path of pretrained policy to load")
@@ -170,351 +165,113 @@ def parse_args():
     return args
 
 
-def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
-    # PPO UPDATE
+class AgentDiscrete(nn.Module):
+    def __init__(self, envs, relu=False):
+        super().__init__()
+        if isinstance(envs.single_observation_space, gym.spaces.Box):
+            input_dim = np.array(envs.single_observation_space.shape).prod()
+        else:
+            input_dim = np.array(envs.single_observation_space.n)
 
-    # flatten buffer data
-    b_obs = obs[:global_step].reshape((-1,) + envs.single_observation_space.shape)
-    b_logprobs = logprobs[:global_step].reshape(-1)
-    b_actions = actions[:global_step].reshape((-1,) + envs.single_action_space.shape).long()
-    b_advantages = advantages[:global_step].reshape(-1)
-    b_returns = returns[:global_step].reshape(-1)
-    b_values = values[:global_step].reshape(-1)
+        self.critic = nn.Sequential(
+            layer_init(nn.Linear(7, 1), std=1.0),
+        )
 
-    batch_size = b_obs.shape[0]  # number of transitions in replay buffer
-    minibatch_size = min(args.minibatch_size, batch_size)
+        W = np.array([
+            [0, 0],
+            [0, 3.9],
+            [0, 0],
+            [0, 0],
+            [0, 0],
+            [0, 0],
+            [0, 0],
+        ], dtype=np.float32)
 
-    b_inds = np.arange(batch_size)
-    clipfracs = []
-    grad_norms = []
-    done_updating = False
-    num_update_minibatches = 0
-    approx_kl_to_log = None
+        W = torch.from_numpy(W.T)
+        W.requires_grad = True
+        actor_layer = nn.Linear(input_dim, envs.single_action_space.n, bias=False)
+        actor_layer.weight = torch.nn.Parameter(W)
+        self.actor = nn.Sequential(
+           actor_layer,
+        )
 
-    for epoch in range(args.update_epochs):
-        np.random.shuffle(b_inds)
+    def get_value(self, x):
+        return self.critic(x)
 
-        for start in range(0, batch_size, minibatch_size):
-            end = start + minibatch_size
-            mb_inds = b_inds[start:end]
-            _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+    def get_action_and_value(self, x, action=None):
+        logits = self.actor(x)
+        probs = Categorical(logits=logits)
+        if action is None:
+            action = probs.sample()
+        return action, probs.log_prob(action), probs.log_prob(action), probs.entropy(), self.critic(x),
 
-            logratio = newlogprob - b_logprobs[mb_inds]
-            ratio = logratio.exp()
+    def get_action(self, x, noise=False):
+        logits = self.actor(x)
+        probs = Categorical(logits=logits)
+        if noise:
+            action = probs.sample()
+        else:
+            action = probs.sample() # @TODO
+        return action
 
-            with torch.no_grad():
-                # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-logratio).mean()
-                approx_kl = ((ratio - 1) - logratio).mean()
-                clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+    def get_action_and_info(self, x, action=None, clamp=False):
+        logits = self.actor(x)
+        probs = Categorical(logits=logits)
+        if action is None:
+            action = probs.sample()
+        return action, probs.log_prob(action), probs.log_prob(action), probs.entropy()
 
-                # Stop updating if we exceed KL threshold.
-                if args.target_kl is not None:
-                    if approx_kl > args.target_kl:
-                        done_updating = True
-                        break
-
-                approx_kl_to_log = approx_kl
-
-            mb_advantages = b_advantages[mb_inds]
-            if args.norm_adv:
-                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-
-            # Policy loss
-            pg_loss1 = -mb_advantages * ratio
-            pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-            pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-
-            # Value loss
-            newvalue = newvalue.view(-1)
-            if args.clip_vloss:
-                v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                v_clipped = b_values[mb_inds] + torch.clamp(
-                    newvalue - b_values[mb_inds],
-                    -args.clip_coef,
-                    args.clip_coef,
-                )
-                v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                v_loss = 0.5 * v_loss_max.mean()
-            else:
-                v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
-
-            entropy_loss = entropy.mean()
-            loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
-
-            optimizer.zero_grad()
-            loss.backward()
-
-            grad_norm = nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
-            grad_norms.append(grad_norm.detach().cpu().numpy())
-            optimizer.step()
-
-            num_update_minibatches += 1
-
-        if done_updating:
-            break
-
-    ppo_stats = {}
-
-    # get update statistics if at least one minibatch update was performed.
-    if num_update_minibatches > 0:
-        y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-        var_y = np.var(y_true)
-        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-
-        ppo_stats = {
-            # 't': global_step,
-            'ppo_value_loss': float(v_loss.item()),
-            'ppo_policy_loss': float(pg_loss.item()),
-            'ppo_entropy': float(entropy_loss.item()),
-            'ppo_old_approx_kl': float(old_approx_kl.item()),
-            'ppo_epochs': epoch + 1,
-            'ppo_num_update_minibatches': float(num_update_minibatches),
-            'ppo_clip_frac': float(np.mean(clipfracs)),
-            'ppo_explained_variance': float(explained_var),
-            'ppo_grad_norm': float(np.mean(grad_norms))
-        }
-        if approx_kl_to_log:
-            ppo_stats['ppo_approx_kl'] = float(approx_kl_to_log.item())
-
-        if args.track:
-            writer.add_scalar("ppo/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-            writer.add_scalar("ppo/value_loss", v_loss.item(), global_step)
-            writer.add_scalar("ppo/policy_loss", pg_loss.item(), global_step)
-            writer.add_scalar("ppo/entropy", entropy_loss.item(), global_step)
-            writer.add_scalar("ppo/old_approx_kl", old_approx_kl.item(), global_step)
-            writer.add_scalar("ppo/approx_kl", approx_kl_to_log, global_step)
-            writer.add_scalar("ppo/epochs", epoch + 1, global_step)
-            writer.add_scalar("ppo/num_update_minibatches", num_update_minibatches, global_step)
-            writer.add_scalar("ppo/clip_frac", np.mean(clipfracs), global_step)
-            writer.add_scalar("ppo/explained_variance", explained_var, global_step)
-            writer.add_scalar("ppo/grad_norm", np.mean(grad_norms), global_step)
-
-    return ppo_stats
+    def sample_actions(self, x):
+        logits = self.actor(x)
+        probs = Categorical(logits=logits)
+        action = probs.sample()
+        return action
 
 
-def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, advantages, global_step, args, writer, logits):
-    # PROPS UPDATE
+    def get_traj_probs(self):
+        s0 = torch.Tensor([[1, 0, 0, 0, 0, 0, 0]])
+        sL = torch.Tensor([[0, 1, 0, 0, 0, 0, 0]])
+        logits0 = self.actor(s0)
+        logitsL = self.actor(sL)
 
-    if global_step <= args.buffer_size - args.props_num_steps:
-        # If the replay buffer is not full, use all data in replay buffer for this update.
-        start = 0
-        end = global_step
-    else:
-        # If the replay buffer is full, exclude the oldest behavior batch from this update; that batch will be evicted
-        # before the next update and thus does not contribute to sampling error.
-        start = args.props_num_steps
-        end = args.buffer_size
+        probs0 = Categorical(logits=logits0).probs.squeeze()
+        probsL = Categorical(logits=logitsL).probs.squeeze()
+        prob_opt = probs0[0] * probsL[0]
+        prob_worst = probs0[0] * probsL[1]
+        prob_subopt = probs0[1]
 
-    # flatten the replay buffer data
-    b_obs = obs[start:end].reshape((-1,) + envs.single_observation_space.shape)
-    b_logprobs = logprobs[start:end].reshape(-1)
-    b_actions = actions[start:end].reshape((-1,) + envs.single_action_space.shape)
-    # b_logits = logits[start:end].reshape(-1)  # action logits for PPO policy
-    b_probs = np.exp(logprobs)
+        return prob_opt, prob_worst, prob_subopt
 
-    if args.props_adv:
-        b_advantages = advantages[start:end].reshape(-1)
+def make_env(env_id, seed, idx, capture_video, run_name):
+    def thunk():
+        env = gym.make(env_id)
+        return env
 
-    batch_size = b_obs.shape[0]
-    minibatch_size = min(args.props_minibatch_size, batch_size)
-    b_inds = np.arange(batch_size)
-    clipfracs = []
+    return thunk
 
-    done_updating = False
-    num_update_minibatches = 0
-    pg_loss = None
-    kl_regularizer_loss = None
-    approx_kl_to_log = None
-    grad_norms = []
-
-    for epoch in range(args.props_update_epochs):
-        np.random.shuffle(b_inds)
-
-        for start in range(0, batch_size, minibatch_size):
-            end = start + minibatch_size
-            mb_inds = b_inds[start:end]
-            mb_obs = b_obs[mb_inds]
-            mb_actions = b_actions[mb_inds]
-            mb_probs = b_probs[mb_inds]
-            mb_logprobs = b_logprobs[mb_inds]
-
-            if args.props_adv:
-                # Do not zero-center advantages; we need to preserve A(s,a) = 0 for AW-PROPS
-                mb_advantages = b_advantages[mb_inds]
-                mb_advantages = (mb_advantages - 0) / (mb_advantages.std() + 1e-8)
-                mb_abs_advantages = torch.abs(mb_advantages)
-                # print(torch.mean(mb_abs_advantages), torch.std(mb_abs_advantages))
-
-            _, _, props_logprobs, entropy = agent_props.get_action_and_info(mb_obs, mb_actions)
-            props_logratio = props_logprobs - b_logprobs[mb_inds]
-            props_ratio = props_logratio.exp()
-
-            with torch.no_grad():
-                # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-props_logratio).mean()
-                approx_kl = ((props_ratio - 1) - props_logratio).mean()
-                clipfracs += [((props_ratio - 1.0).abs() > args.props_clip_coef).float().mean().item()]
-
-                if args.props_target_kl:
-                    if approx_kl > args.props_target_kl:
-                        done_updating = True
-                        break
-                approx_kl_to_log = approx_kl
-
-            kl_regularizer_loss = (mb_probs*(mb_logprobs - props_logprobs)).mean()
-
-            pg_loss1 = props_ratio
-            pg_loss2 = torch.clamp(props_ratio, 1 - args.props_clip_coef, 1 + args.props_clip_coef)
-            if args.props_adv:
-                pg_loss = (torch.max(pg_loss1, pg_loss2) * mb_abs_advantages).mean()
-            else:
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-
-            if args.ros:
-                pg_loss = -props_logratio.mean()
-
-            entropy_loss = entropy.mean()
-            loss = pg_loss + args.props_lambda * kl_regularizer_loss
-
-            props_optimizer.zero_grad()
-            loss.backward()
-
-            grad_norm = nn.utils.clip_grad_norm_(agent_props.parameters(), args.props_max_grad_norm)
-            grad_norms.append(grad_norm.detach().cpu().numpy())
-
-            props_optimizer.step()
-            num_update_minibatches += 1
-
-        if done_updating:
-            break
-
-    props_stats = {}
-
-    # Return training statistics if at least one minibatch update was performed.
-    if num_update_minibatches > 0:
-        props_stats = {
-            'props_policy_loss': float(pg_loss.item()),
-            'props_entropy': float(entropy_loss.item()),
-            'props_old_approx_kl': float(old_approx_kl.item()),
-            'props_epochs': epoch + 1,
-            'props_clip_frac': float(np.mean(clipfracs)),
-            'props_grad_norm': float(np.mean(grad_norms)),
-            'props_num_update_minibatches': num_update_minibatches,
-            # 'props_kl_regularizer_loss': float(kl_regularizer_loss.item()),
-            'props_approx_kl': float(approx_kl_to_log.item()),
-        }
-        if args.track:
-            writer.add_scalar("props/learning_rate", props_optimizer.param_groups[0]["lr"], global_step)
-            writer.add_scalar("props/epochs", epoch + 1, global_step)
-            writer.add_scalar("props/clipfrac", np.mean(clipfracs), global_step)
-            writer.add_scalar("props/num_update_minibatches", num_update_minibatches, global_step)
-            writer.add_scalar("props/grad_norm", np.mean(grad_norms), global_step)
-            writer.add_scalar("props/policy_loss", pg_loss.item(), global_step)
-            writer.add_scalar("props/entropy", entropy_loss.item(), global_step)
-            # writer.add_scalar("props/kl_regularizer_loss", kl_regularizer_loss.item(), global_step)
-            writer.add_scalar("props/approx_kl", approx_kl_to_log, global_step)
-    return props_stats
-
-
-def compute_se(args, agent, agent_props, obs, actions, advantages, sampling_error_logs, global_step, envs, prefix=""):
+def compute_se(args, agent, rewards, sampling_error_logs):
     # COMPUTE SAMPLING ERROR
 
-    # Initialize empirical policy equal to the current PPO policy.
-    agent_mle = copy.deepcopy(agent)
+    prob_opt_expected, prob_worst_expected, prob_subopt_expected = agent.get_traj_probs()
+    prob_opt_empirical, prob_worst_empirical, prob_subopt_empirical = (rewards == 2).sum()/100, (rewards == 0.5).sum()/100, (rewards == 1).sum()/100
 
-    # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
-    params = [p for p in agent_mle.actor_mean.parameters()]
-    params[0].requires_grad = False
-    params[2].requires_grad = False
+    probs_expected = np.array([
+        prob_opt_expected.item(),
+        prob_worst_expected.item(),
+        prob_subopt_expected.item(),
+    ]) * 100
+    probs_empirical = np.array([
+        prob_opt_empirical.item(),
+        prob_worst_empirical.item(),
+        prob_subopt_empirical.item(),
+    ]) * 100
 
-    optimizer_mle = optim.Adam(agent_mle.parameters(), lr=args.se_lr)
+    sampling_error_logs['traj_probs_expected'].append(probs_expected)
+    sampling_error_logs['traj_probs_empirical'].append(probs_empirical)
+    sampling_error_logs['traj_probs_error'].append(probs_empirical-probs_expected)
 
-    obs_dim = obs.shape[-1]
-    action_dim = actions.shape[-1]
-    b_obs = obs.reshape(-1, obs_dim).to(args.device)
-    b_actions = actions.reshape(-1, action_dim).to(args.device)
-    b_advantages = advantages.reshape(-1).to(args.device)
-
-    n = len(b_obs)
-    b_inds = np.arange(n)
-
-    mb_size = 512 * b_obs.shape[0] // args.num_steps
-    for epoch in range(args.se_epochs):
-
-        np.random.shuffle(b_inds)
-        for start in range(0, n, mb_size):
-            end = start + mb_size
-            mb_inds = b_inds[start:end]
-
-            _, _, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs[mb_inds], b_actions[mb_inds], clamp=True)
-            loss = -torch.mean(logprobs_mle)
-
-            optimizer_mle.zero_grad()
-            loss.backward()
-            grad_norm = nn.utils.clip_grad_norm_(agent_mle.parameters(), 1, norm_type=2)
-            optimizer_mle.step()
-
-    with torch.no_grad():
-        _, action_probs, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
-
-        # Compute sampling error
-        _, action_probs_target, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
-        b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
-        b_advantages = torch.abs(b_advantages)
-        logratio = logprobs_mle - logprobs_target
-        approx_kl_mle_target = (b_advantages * logratio).mean()
-
-        # Compute KL divergence between PROPS and PPO policy
-        _, action_probs_props, logprobs_props, ent_props = agent_props.get_action_and_info(b_obs, b_actions, clamp=True)
-        logratio = logprobs_target - logprobs_props
-        approx_kl_props_target = (torch.abs(b_advantages) * logratio).mean()
-
-        sampling_error_logs[f'{prefix}kl_mle_target'].append(approx_kl_mle_target.item())
-        sampling_error_logs[f'{prefix}kl_props_target'].append(approx_kl_props_target.item())
-        sampling_error_logs[f'{prefix}ent_target'].append(ent_target.mean().item())
-        sampling_error_logs[f'{prefix}ent_props'].append(ent_props.mean().item())
-
-        np.savez(f'{args.save_dir}/stats.npz',
-                 **sampling_error_logs)
-
-
-def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step):
-    # COMPUTE ON-POLICY SAMPLING ERROR USING THE TARGET POLICY SEQUENCE OBTAINED DURING TRAINING
-
-    envs_se = copy.deepcopy(envs)
-
-    obs_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs_se.single_observation_space.shape).to(args.device)
-    actions_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs_se.single_action_space.shape).to(args.device)
-    buffer_pos = 0  # index of buffer position to be updated in the current timestep
-
-    env_reward_normalize = envs_se.envs[0].env
-    env_obs_normalize = envs_se.envs[0].env.env.env
-
-    env_obs_normalize.set_update(False)
-    env_reward_normalize.set_update(False)
-
-    for i in range(len(agent_buffer)):
-        agent = agent_buffer[i]
-        if i == 0:
-            next_obs = next_obs_buffer[i]
-
-        for t in range(args.num_steps):
-            obs_buffer[buffer_pos] = next_obs  # store normalized obs
-
-            with torch.no_grad():
-                action, action_probs, _, _, _ = agent.get_action_and_value(next_obs)
-                actions_buffer[buffer_pos] = action
-
-            next_obs, reward, terminated, truncated, infos = envs_se.step(action.cpu().numpy())
-            next_obs = torch.Tensor(next_obs).to(args.device)
-
-            buffer_pos += 1
-
-    compute_se(args, agent_buffer[-1], agent_buffer[-1], obs_buffer[:buffer_pos], actions_buffer[:buffer_pos],
-               sampling_error_logs, global_step, envs, prefix="ref_")
-
+    # print(sampling_error_logs['traj_probs_expected'])
+    np.savez(f'{args.save_dir}/stats.npz', **sampling_error_logs)
 
 def main():
     args = parse_args()
@@ -697,7 +454,7 @@ def main():
         # Compute sampling error *before* updating the target policy.
         if args.se:
             if global_step % (args.num_steps * args.se_freq) == 0:
-                compute_se(args, agent, agent_props, obs, actions, advantages, sampling_error_logs, global_step, envs)
+                compute_se(args, agent, rewards_buffer, sampling_error_logs)
                 if args.se_ref:
                     compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
                     sampling_error_logs[f'diff_kl_mle_target'].append(
@@ -706,7 +463,7 @@ def main():
                     print('On-policy sampling error:', sampling_error_logs[f'ref_kl_mle_target'])
 
                 sampling_error_logs['t'].append(global_step)
-                print('PROPS sampling error:', sampling_error_logs[f'kl_mle_target'])
+                # print('PROPS sampling error:', sampling_error_logs[f'traj_probs_error'])
                 np.savez(f'{args.save_dir}/stats.npz',
                          **sampling_error_logs)
 
