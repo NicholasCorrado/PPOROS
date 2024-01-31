@@ -107,30 +107,36 @@ def plot(save_dict, name, m=100000, success_threshold=None, return_cutoff=-np.in
 
             std = np.std(avgs, axis=0)
             N = len(avgs)
-            ci = 1 * std / np.sqrt(N) * 1.96
+            ci = 1.96 * std / np.sqrt(N) * 1.96
             q05 = avg_of_avgs - ci
             q95 = avg_of_avgs + ci
+
+
+            # if avg_of_avgs[-10:].mean() < 4900 or N < 10: continue
 
         style_kwargs = get_line_styles(agent)
         style_kwargs['linewidth'] = 2
 
-        style_kwargs['linewidth'] = 1.5
+        # style_kwargs['linewidth'] = 1.5
 
-        if 'PROPS' in agent:
-            style_kwargs['linestyle'] = '-'
-            style_kwargs['linewidth'] = 3
+        style_kwargs['color'] = None
+        # if 'PROPS' in agent:
+        #     style_kwargs['linestyle'] = '-'
+        #     style_kwargs['linewidth'] = 3
+        #     # style_kwargs['color'] = 'k'
+        #
+        #
+        # elif 'ppo_buffer' in agent or 'PPO-Buffer' in agent or 'b=' in agent or 'Buffer' in agent:
+        #     style_kwargs['linestyle'] = '--'
+        # elif 'ppo,' in agent or 'PPO,' in agent or 'PPO with' in agent or 'PPO' == agent:
+        #     style_kwargs['linestyle'] = ':'
+        # elif 'Priv' in agent:
+        #     style_kwargs['linestyle'] = '-.'
+        #
+        # elif '0.0001' in agent:
+        #     style_kwargs['linestyle'] = '--'
 
-        elif 'ppo_buffer' in agent or 'PPO-Buffer' in agent or 'b=' in agent or 'Buffer' in agent:
-            style_kwargs['linestyle'] = '--'
-        elif 'ppo,' in agent or 'PPO,' in agent or 'PPO with' in agent or 'PPO' == agent:
-            style_kwargs['linestyle'] = ':'
-        elif 'Priv' in agent:
-            style_kwargs['linestyle'] = '-.'
-
-        elif '0.0001' in agent:
-            style_kwargs['linestyle'] = '--'
-
-        print(agent, avg_of_avgs[-1], q05[-1], q95[-1])
+        # print(agent, N, avg_of_avgs[-1], q05[-1], q95[-1])
 
         try:
             times = info['times']
@@ -144,11 +150,11 @@ def plot(save_dict, name, m=100000, success_threshold=None, return_cutoff=-np.in
                 avg_of_avgs = avg_of_avgs[:m]
                 q05 = q05[:m]
                 q95 = q95[:m]
-        plt.plot(x[:l], avg_of_avgs, label=agent, **style_kwargs)
+        plt.plot(x, avg_of_avgs, label=agent, **style_kwargs)
         if style_kwargs['linestyle'] == 'None':
-            plt.fill_between(x[:l], q05, q95, alpha=0)
+            plt.fill_between(x, q05, q95, alpha=0)
         else:
-            plt.fill_between(x[:l], q05, q95, alpha=0.2)
+            plt.fill_between(x, q05, q95, alpha=0.2)
         # plt.fill_between(x, q05, q95, alpha=0.2, color=style_kwargs['color'])
 
         i += 1
@@ -183,7 +189,7 @@ def get_paths(results_dir, key, x_scale=1, max_t=None, evaluations_name='evaluat
                 path_dict[key]['x_scale'] = x_scale
                 path_dict[key]['max_t'] = max_t
     except Exception as e:
-        print(e)
+        # print(e)
         x = 0
     return path_dict
 
@@ -234,7 +240,7 @@ def get_times(save_dict):
             std_time = np.std(times, axis=0)
 
 
-
-        time_dict[agent] = (avg_time, std_time)
+        if not (avg_time is None):
+            time_dict[agent] = (avg_time, std_time)
 
     return time_dict

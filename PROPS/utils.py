@@ -297,6 +297,8 @@ class AgentDiscrete(nn.Module):
 
     def get_action_and_info(self, x, action=None, clamp=False):
         logits = self.actor(x)
+        if clamp:
+            logits = torch.clamp(logits, min=-3, max=1)
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
