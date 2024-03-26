@@ -8,37 +8,230 @@ from collections import defaultdict, deque
 from distutils.util import strtobool
 
 import gymnasium as gym
-from gymnasium.wrappers import NormalizeReward
-from PROPS.utils import NormalizeObservation
-
-import custom_envs
-# import minatar
+# import custom_envs
+import minatar
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import yaml
+from torch.distributions import Categorical
 
-from PROPS.utils import Evaluate, AgentDiscrete, EvaluateDiscrete
-from PROPS.utils import get_latest_run_id, make_env, Agent
+from utils import Evaluate, AgentDiscrete, EvaluateDiscrete, layer_init
+from utils import get_latest_run_id, make_env, Agent
 
-def make_env(env_id, seed, idx, capture_video, run_name, gamma):
+class AgentDiscreteCNN(nn.Module):
+    def __init__(self, envs):
+        super().__init__()
+
+        in_channels = envs.single_observation_space.shape[2]
+        def size_linear_unit(size, kernel_size=3, stride=1):
+            return (size - (kernel_size - 1) - 1) // stride + 1
+        num_linear_units = size_linear_unit(10) * size_linear_unit(10) * 16
+
+        self.network = nn.Sequential(
+            layer_init(nn.Conv2d(in_channels=in_channels, out_channels=16, kernel_size=3, stride=1)),
+            nn.ReLU(),
+            # layer_init(nn.Conv2d(32, 64, 2, stride=2)),
+            # nn.ReLU(),
+            # layer_init(nn.Conv2d(64, 64, 1, stride=1)),
+            # nn.ReLU(),
+            nn.Flatten(),
+            layer_init(nn.Linear(num_linear_units, 128)),
+            nn.ReLU(),
+        )
+        self.actor = layer_init(nn.Linear(128, envs.single_action_space.n), std=1)
+        self.critic = layer_init(nn.Linear(128, 1), std=1)
+
+    def get_value(self, x):
+        return self.critic(self.network(x))
+
+    def get_action_and_value(self, x, action=None):
+        hidden = self.network(x)
+        logits = self.actor(hidden)
+        probs = Categorical(logits=logits)
+        if action is None:
+            action = probs.sample()
+        return action, probs, probs.log_prob(action), probs.entropy(), self.critic(hidden)
+
+    def get_action_and_info(self, x, action=None):
+        hidden = self.network(x)
+        logits = self.actor(hidden)
+        probs = Categorical(logits=logits)
+        if action is None:
+            action = probs.sample()
+        return action, probs, probs.log_prob(action), probs.entropy()
+
+    def get_action(self, x, noise=None):
+        hidden = self.network(x)
+        logits = self.actor(hidden)
+        probs = Categorical(logits=logits)
+        if noise:
+            action = probs.sample()
+        else:
+            # action = torch.argmax(logits, dim=-1)
+            action = probs.sample() # @TODO
+        return action
+
+    def sample_action(self, x, noise=None):
+        hidden = self.network(x)
+        logits = self.actor(hidden)
+        probs = Categorical(logits=logits)
+        action = probs.sample()
+        return action
+
+
+class EvaluateDiscrete:
+    """
+    Callback for evaluating an agent.
+
+    .. warning::
+
+      When using multiple environments, each call to  ``env.step()``
+      will effectively correspond to ``n_envs`` steps.
+      To account for that, you can use ``eval_freq = max(eval_freq // n_envs, 1)``
+
+    :param eval_env: The environment used for initialization
+    :param callback_on_new_best: Callback to trigger
+        when there is a new best model according to the ``mean_reward``
+    :param callback_after_eval: Callback to trigger after every evaluation
+    :param n_eval_episodes: The number of episodes to test the agent
+    :param eval_freq: Evaluate the agent every ``eval_freq`` call of the callback.
+    :param log_path: Path to a folder where the evaluations (``evaluations.npz``)
+        will be saved. It will be updated at each evaluation.
+    :param best_model_save_path: Path to a folder where the best model
+        according to performance on the eval env will be saved.
+    :param deterministic: Whether the evaluation should
+        use a stochastic or deterministic actions.
+    :param render: Whether to render or not the environment during evaluation
+    :param verbose: Verbosity level: 0 for no output, 1 for indicating information about evaluation results
+    :param warn: Passed to ``evaluate_policy`` (warns if ``eval_env`` has not been
+        wrapped with a Monitor wrapper)
+    """
+
+    def __init__(
+            self,
+            model,
+            eval_env,
+            n_eval_episodes: int = 5,
+            eval_freq: int = 10000,
+            log_path: str = None,
+            suffix: str = '',
+            save_model: bool = False,
+            deterministic: bool = True,
+            device=None,
+    ):
+        self.n_eval_episodes = n_eval_episodes
+        self.eval_freq = eval_freq
+        self.best_mean_reward = -np.inf
+        self.last_mean_reward = -np.inf
+        self.deterministic = deterministic
+        self.device = device
+
+        self.save_model = save_model
+        self.model = model
+        self.eval_env = eval_env
+        self.best_model_save_path = log_path
+        self.suffix = suffix
+
+        # Logs will be written in ``evaluations.npz``
+        os.makedirs(name=log_path, exist_ok=True)
+        if log_path is not None:
+            if self.suffix != '':
+                self.log_path = os.path.join(log_path, f"evaluations_{suffix}")
+            else:
+                self.log_path = os.path.join(log_path, f"evaluations")
+        self.evaluations_returns = []
+        self.evaluations_timesteps = []
+        self.evaluations_successes = []
+        # For computing success rate
+        self._is_success_buffer = []
+
+    def evaluate(self, t, train_env, noise):
+        # if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
+
+        # self.eval_env = copy.deepcopy(train_env.envs)
+        returns, successes = self._evaluate(noise=noise)
+
+        if self.log_path is not None:
+            self.evaluations_timesteps.append(t)
+            self.evaluations_returns.append(returns)
+            self.evaluations_successes.append(successes)
+
+            np.savez(
+                self.log_path,
+                timesteps=self.evaluations_timesteps,
+                returns=self.evaluations_returns,
+                successes=self.evaluations_successes,
+            )
+
+            mean_reward, std_reward = np.mean(returns), np.std(returns)
+            mean_success, std_success = np.mean(successes), np.std(successes)
+
+            self.last_mean_reward = mean_reward
+
+            print(f"Eval num_timesteps={t}, " f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}")
+            print(f"Eval num_timesteps={t}, " f"episode_success={mean_success:.2f} +/- {std_success:.2f}")
+
+            if mean_reward > self.best_mean_reward:
+                print("New best mean reward!")
+                if self.save_model:
+                    torch.save(self.model, os.path.join(self.best_model_save_path, "best_model.zip"))
+                self.best_mean_reward = mean_reward
+
+        return mean_reward, std_reward
+
+    def _evaluate(self, noise):
+        eval_returns = []
+        eval_successes = []
+
+        obs, _ = self.eval_env.reset()
+        # permute = np.array([0, 3, 1, 2])
+        for episode_i in range(self.n_eval_episodes):
+            ep_returns = []
+            ep_successes = []
+            done = False
+            step = 0
+            while not done:
+                step += 1
+                # ALGO LOGIC: put action logic here
+                with torch.no_grad():
+                    obs = torch.Tensor(obs).permute(0, 3, 1, 2)
+                    actions = self.model.get_action(obs.to(self.device), noise=noise)
+                    # actions = self.model(torch.Tensor(obs).to(self.device))
+                    actions = actions.cpu().numpy()
+
+                # TRY NOT TO MODIFY: execute the game and log data.
+                next_obs, rewards, terminateds, truncateds, infos = self.eval_env.step(actions)
+                done = terminateds[0] or truncateds[0]
+
+                # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
+                obs = next_obs
+
+                ep_returns.append(rewards[0])
+                ep_successes.append(terminateds[0])
+
+            eval_returns.append(np.sum(ep_returns))
+            eval_successes.append(np.sum(ep_successes) * 100)
+
+        return eval_returns, eval_successes
+
+def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
         env = gym.make(env_id)
-        env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
         env = gym.wrappers.RecordEpisodeStatistics(env)
         if capture_video:
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        env = NormalizeObservation(env)
-        env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        # env = NormalizeReward(env, gamma=gamma)
-        # env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+        # env = gym.wrappers.ResizeObservation(env, (84, 84))
+        # env = gym.wrappers.GrayScaleObservation(env)
+        # env = gym.wrappers.FrameStack(env, 4)
+        # env.seed(seed)
+        # env.action_space.seed(seed)
+        # env.observation_space.seed(seed)
         return env
 
     return thunk
-
-
 def parse_args():
     # fmt: off
     parser = argparse.ArgumentParser()
@@ -69,10 +262,10 @@ def parse_args():
                         help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
 
     # General training parameters (both PROPS and PPO)
-    parser.add_argument("--env-id", type=str, default="CartPole-v1", help="Environment id")
+    parser.add_argument("--env-id", type=str, default="MinAtar/Freeway-v0", help="Environment id")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
-    parser.add_argument("--total-timesteps", type=int, default=5e5, help="Number of timesteps to train")
-    parser.add_argument("--seed", type=int, default=None, help="Seed of the experiment")
+    parser.add_argument("--total-timesteps", type=int, default=1000000, help="Number of timesteps to train")
+    parser.add_argument("--seed", type=int, default=0, help="Seed of the experiment")
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="If toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
@@ -83,14 +276,14 @@ def parse_args():
                         help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
     parser.add_argument("--buffer-batches", "-b", type=int, default=1,
                         help="Number of PPO target batches to store in the replay buffer (b in paper)")
-    parser.add_argument("--learning-rate", "-lr", type=float, default=1e-3, help="PPO Adam optimizer learning rate")
+    parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="PPO Adam optimizer learning rate")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Toggle learning rate annealing for PPO policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95,
                         help="General advantage estimation lambda (not the lambda used for PROPS")
     parser.add_argument("--num-minibatches", type=int, default=32, help="Number of minibatches updates for PPO update")
-    parser.add_argument("--update-epochs", type=int, default=10, help="Number of epochs for PPO update")
+    parser.add_argument("--update-epochs", type=int, default=3, help="Number of epochs for PPO update")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Toggles advantages normalization for PPO update")
     parser.add_argument("--clip-coef", type=float, default=0.2,
@@ -105,13 +298,13 @@ def parse_args():
                         help="Target/cutoff KL divergence threshold for PPO update")
 
     # PROPS/ROS hyperparameters
-    parser.add_argument("--props", type=int, default=1,
+    parser.add_argument("--props", type=int, default=0,
                         help="If True, use PROPS to collect data, otherwise use on-policy sampling")
     parser.add_argument("--ros", type=int, default=0,
                         help="If True, use ROS to collect data, otherwise use on-policy sampling")
-    parser.add_argument("--props-num-steps", type=int, default=128,
+    parser.add_argument("--props-num-steps", type=int, default=512,
                         help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-3,
+    parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-4,
                         help="PROPS Adam optimizer learning rate")
     parser.add_argument("--props-anneal-lr", type=lambda x: bool(strtobool(x)), default=0, nargs="?", const=False,
                         help="Toggle learning rate annealing for PROPS policy")
@@ -119,12 +312,12 @@ def parse_args():
                         help="Surrogate clipping coefficient \epsilon_PROPS for PROPS")
     parser.add_argument("--props-max-grad-norm", type=float, default=0.5,
                         help="Maximum norm for gradient clipping for PROPS update")
-    parser.add_argument("--props-num-minibatches", type=int, default=8,
+    parser.add_argument("--props-num-minibatches", type=int, default=16,
                         help="Number of minibatches updates for PROPS update")
     parser.add_argument("--props-update-epochs", type=int, default=16, help="Number of epochs for PROPS update")
-    parser.add_argument("--props-target-kl", type=float, default=0.03,
+    parser.add_argument("--props-target-kl", type=float, default=0.05,
                         help="Target/cutoff KL divergence threshold for PROPS update")
-    parser.add_argument("--props-lambda", type=float, default=0.1, help="Regularization coefficient for PROPS update")
+    parser.add_argument("--props-lambda", type=float, default=0.3, help="Regularization coefficient for PROPS update")
     parser.add_argument("--props-adv", type=int, default=False, help="If True, the PROPS update is weighted using the absolute advantage |A(s,a)|")
     parser.add_argument("--props-eval", type=int, default=False,
                         help="If set, the PROPS policy is evaluated every props_eval ")
@@ -186,7 +379,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     # PPO UPDATE
 
     # flatten buffer data
-    b_obs = obs[:global_step].reshape((-1,) + envs.single_observation_space.shape)
+    b_obs = obs[:global_step].reshape((-1,) + (7, 10, 10))
     b_logprobs = logprobs[:global_step].reshape(-1)
     b_actions = actions[:global_step].reshape((-1,) + envs.single_action_space.shape).long()
     b_advantages = advantages[:global_step].reshape(-1)
@@ -306,7 +499,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
     return ppo_stats
 
 
-def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, advantages, global_step, args, writer, logits):
+def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, advantages, global_step, args, writer, means, stds):
     # PROPS UPDATE
 
     if global_step <= args.buffer_size - args.props_num_steps:
@@ -320,11 +513,11 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
         end = args.buffer_size
 
     # flatten the replay buffer data
-    b_obs = obs[start:end].reshape((-1,) + envs.single_observation_space.shape)
+    b_obs = obs[start:end].reshape((-1,) + (7, 10, 10))
     b_logprobs = logprobs[start:end].reshape(-1)
     b_actions = actions[start:end].reshape((-1,) + envs.single_action_space.shape)
-    # b_logits = logits[start:end].reshape(-1)  # action logits for PPO policy
-    b_probs = np.exp(logprobs)
+    means = means[start:end]  # mean action for PPO policy
+    stds = stds[start:end]  # std for PPO policy
 
     if args.props_adv:
         b_advantages = advantages[start:end].reshape(-1)
@@ -349,9 +542,6 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
             mb_inds = b_inds[start:end]
             mb_obs = b_obs[mb_inds]
             mb_actions = b_actions[mb_inds]
-            mb_probs = b_probs[mb_inds]
-            mb_logprobs = b_logprobs[mb_inds]
-
             if args.props_adv:
                 # Do not zero-center advantages; we need to preserve A(s,a) = 0 for AW-PROPS
                 mb_advantages = b_advantages[mb_inds]
@@ -359,8 +549,8 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
                 mb_abs_advantages = torch.abs(mb_advantages)
                 # print(torch.mean(mb_abs_advantages), torch.std(mb_abs_advantages))
 
-            _, _, props_logprobs, entropy = agent_props.get_action_and_info(mb_obs, mb_actions)
-            props_logratio = props_logprobs - b_logprobs[mb_inds]
+            _, _, props_logprob, entropy = agent_props.get_action_and_info(mb_obs, mb_actions)
+            props_logratio = props_logprob - b_logprobs[mb_inds]
             props_ratio = props_logratio.exp()
 
             with torch.no_grad():
@@ -375,7 +565,10 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
                         break
                 approx_kl_to_log = approx_kl
 
-            kl_regularizer_loss = (mb_probs*(mb_logprobs - props_logprobs)).mean()
+            mu2 = means[mb_inds]
+            sigma2 = stds[mb_inds]
+            kl_regularizer_loss = (torch.log(sigma2 / sigma1) + (sigma1 ** 2 + (mu1 - mu2) ** 2) / (
+                        2 * sigma2 ** 2) - 0.5).mean()
 
             pg_loss1 = props_ratio
             pg_loss2 = torch.clamp(props_ratio, 1 - args.props_clip_coef, 1 + args.props_clip_coef)
@@ -414,7 +607,7 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
             'props_clip_frac': float(np.mean(clipfracs)),
             'props_grad_norm': float(np.mean(grad_norms)),
             'props_num_update_minibatches': num_update_minibatches,
-            # 'props_kl_regularizer_loss': float(kl_regularizer_loss.item()),
+            'props_kl_regularizer_loss': float(kl_regularizer_loss.item()),
             'props_approx_kl': float(approx_kl_to_log.item()),
         }
         if args.track:
@@ -425,19 +618,19 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
             writer.add_scalar("props/grad_norm", np.mean(grad_norms), global_step)
             writer.add_scalar("props/policy_loss", pg_loss.item(), global_step)
             writer.add_scalar("props/entropy", entropy_loss.item(), global_step)
-            # writer.add_scalar("props/kl_regularizer_loss", kl_regularizer_loss.item(), global_step)
+            writer.add_scalar("props/kl_regularizer_loss", kl_regularizer_loss.item(), global_step)
             writer.add_scalar("props/approx_kl", approx_kl_to_log, global_step)
     return props_stats
 
 
-def compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, envs, prefix=""):
+def compute_se(args, agent, agent_props, obs, actions, advantages, sampling_error_logs, global_step, envs, prefix=""):
     # COMPUTE SAMPLING ERROR
 
     # Initialize empirical policy equal to the current PPO policy.
     agent_mle = copy.deepcopy(agent)
 
     # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
-    params = [p for p in agent_mle.actor.parameters()]
+    params = [p for p in agent_mle.actor_mean.parameters()]
     params[0].requires_grad = False
     params[2].requires_grad = False
 
@@ -447,6 +640,7 @@ def compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, envs
     action_dim = actions.shape[-1]
     b_obs = obs.reshape(-1, obs_dim).to(args.device)
     b_actions = actions.reshape(-1, action_dim).to(args.device)
+    b_advantages = advantages.reshape(-1).to(args.device)
 
     n = len(b_obs)
     b_inds = np.arange(n)
@@ -471,16 +665,16 @@ def compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, envs
         _, action_probs, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
 
         # Compute sampling error
-        _, _, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
-        # b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
-        # b_advantages = torch.abs(b_advantages)
+        _, action_probs_target, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
+        b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
+        b_advantages = torch.abs(b_advantages)
         logratio = logprobs_mle - logprobs_target
-        approx_kl_mle_target = (logratio).mean()
+        approx_kl_mle_target = (b_advantages * logratio).mean()
 
         # Compute KL divergence between PROPS and PPO policy
         _, action_probs_props, logprobs_props, ent_props = agent_props.get_action_and_info(b_obs, b_actions, clamp=True)
         logratio = logprobs_target - logprobs_props
-        approx_kl_props_target = logratio.mean()
+        approx_kl_props_target = (torch.abs(b_advantages) * logratio).mean()
 
         sampling_error_logs[f'{prefix}kl_mle_target'].append(approx_kl_mle_target.item())
         sampling_error_logs[f'{prefix}kl_props_target'].append(approx_kl_props_target.item())
@@ -491,20 +685,20 @@ def compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, envs
                  **sampling_error_logs)
 
 
-def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs):
+def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step):
     # COMPUTE ON-POLICY SAMPLING ERROR USING THE TARGET POLICY SEQUENCE OBTAINED DURING TRAINING
 
     envs_se = copy.deepcopy(envs)
-    envs_se.reset()
 
     obs_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs_se.single_observation_space.shape).to(args.device)
     actions_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs_se.single_action_space.shape).to(args.device)
     buffer_pos = 0  # index of buffer position to be updated in the current timestep
 
-    # env_reward_normalize = envs_se.envs[0].env
-    # env_obs_normalize = envs_se.envs[0].env.env.env
-    # env_obs_normalize.set_update(False)
-    # env_reward_normalize.set_update(False)
+    env_reward_normalize = envs_se.envs[0].env
+    env_obs_normalize = envs_se.envs[0].env.env.env
+
+    env_obs_normalize.set_update(False)
+    env_reward_normalize.set_update(False)
 
     for i in range(len(agent_buffer)):
         agent = agent_buffer[i]
@@ -523,9 +717,8 @@ def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_log
 
             buffer_pos += 1
 
-
     compute_se(args, agent_buffer[-1], agent_buffer[-1], obs_buffer[:buffer_pos], actions_buffer[:buffer_pos],
-               sampling_error_logs, envs_se, prefix="ref_")
+               sampling_error_logs, global_step, envs, prefix="ref_")
 
 
 def main():
@@ -564,39 +757,42 @@ def main():
     capture_video = False
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, args.seed + i, i, capture_video, run_name, args.gamma) for i in range(args.num_envs)]
+        [make_env(args.env_id, args.seed + i, i, capture_video, run_name) for i in range(args.num_envs)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only continuous action space is supported"
-    # env_reward_normalize = envs.envs[0].env
-    # env_obs_normalize = envs.envs[0].env.env.env
-    env_obs_normalize = envs.envs[0].env
+    # for convenience
+    obs_dim = envs.single_observation_space.shape[0]
+    action_dim = envs.single_action_space.n
 
     # PPO target agent
-    agent = AgentDiscrete(envs).to(args.device)
+    agent = AgentDiscreteCNN(envs, ).to(args.device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     # load pretrained policy and normalization information
     if args.policy_path:
         agent = torch.load(args.policy_path).to(args.device)
-    # if args.normalization_dir:
-    #     with open(f'{args.normalization_dir}/env_obs_normalize', 'rb') as f:
-    #         obs_rms = pickle.load(f)
-    #         env_obs_normalize.obs_rms = obs_rms
-    #     with open(f'{args.normalization_dir}/env_reward_normalize', 'rb') as f:
-    #         return_rms = pickle.load(f)
-    #         env_reward_normalize.return_rms = return_rms
+    if args.normalization_dir:
+        with open(f'{args.normalization_dir}/env_obs_normalize', 'rb') as f:
+            obs_rms = pickle.load(f)
+            env_obs_normalize.obs_rms = obs_rms
+        with open(f'{args.normalization_dir}/env_reward_normalize', 'rb') as f:
+            return_rms = pickle.load(f)
+            env_reward_normalize.return_rms = return_rms
 
     # ROS behavior agent
     agent_props = copy.deepcopy(agent).to(args.device)  # initialize props policy to be equal to the eval policy
     props_optimizer = optim.Adam(agent_props.parameters(), lr=args.props_learning_rate, eps=1e-5)
 
     # Evaluation modules
-    eval_module = EvaluateDiscrete(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir,
+    eval_envs = gym.vector.SyncVectorEnv(
+        [make_env(args.env_id, args.seed + i, i, capture_video, run_name) for i in range(1)]
+    )
+    eval_module = EvaluateDiscrete(model=agent, eval_env=eval_envs, n_eval_episodes=args.eval_episodes, log_path=args.save_dir,
                            device=args.device)
-    eval_module_props = EvaluateDiscrete(model=agent_props, eval_env=None, n_eval_episodes=args.eval_episodes,
+    eval_module_props = EvaluateDiscrete(model=agent_props, eval_env=eval_envs, n_eval_episodes=args.eval_episodes,
                                  log_path=args.save_dir, device=args.device, suffix='props')
 
     # replay buffer setup
-    obs_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs.single_observation_space.shape).to(args.device)
+    obs_buffer = torch.zeros((args.buffer_size, args.num_envs) + (7, 10, 10)).to(args.device)
     actions_buffer = torch.zeros((args.buffer_size, args.num_envs) + envs.single_action_space.shape).to(args.device)
     rewards_buffer = torch.zeros((args.buffer_size, args.num_envs)).to(args.device)
     dones_buffer = torch.zeros((args.buffer_size, args.num_envs)).to(args.device)
@@ -605,12 +801,13 @@ def main():
     # initialize RL loop
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(args.device)
+    next_obs = next_obs.permute(0, 3, 1, 2)
     next_done = torch.zeros(args.num_envs).to(args.device)
     num_updates = args.total_timesteps // args.batch_size
     if args.se_freq is None:
         args.se_freq = num_updates // 30
     # There are (ppo num updates)/(props num updates) times as many props updates.
-    num_props_updates = int(num_updates * (args.num_steps // args.props_num_steps))
+    num_props_updates = num_updates * (args.num_steps // args.props_num_steps)
 
     agent_buffer = deque(maxlen=args.buffer_batches)
     next_obs_buffer = deque(maxlen=args.buffer_batches)
@@ -625,18 +822,21 @@ def main():
     target_update = 0
 
     # evaluate initial policy
-    eval_module.evaluate(global_step, train_env=envs, noise=False)
-    if args.props_eval:
-        eval_module_props.evaluate(global_step, train_env=envs, noise=False)
+    # eval_module.evaluate(global_step, train_env=envs, noise=False)
+    # if args.props_eval:
+    #     eval_module_props.evaluate(global_step, train_env=envs, noise=False)
 
     ppo_stats = {}
     props_stats = {}
+
+    """
+    RuntimeError: Given groups=1, weight of size [16, 4, 3, 3], expected input[1, 10, 10, 4] to have 4 channels, but got 10 channels instead
+    """
 
     for props_update in range(1, num_props_updates + 1):
         for step in range(0, args.props_num_steps):
             global_step += 1 * args.num_envs
             obs_buffer[buffer_pos] = next_obs  # store unnormalized obs
-            # obs_buffer[buffer_pos] = env_obs_normalize.unnormalize(next_obs)  # store unnormalized obs
             dones_buffer[buffer_pos] = next_done
 
             with torch.no_grad():
@@ -653,6 +853,7 @@ def main():
             done = np.logical_or(terminated, truncated)
             rewards_buffer[buffer_pos] = torch.tensor(reward).to(args.device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(done).to(args.device)
+            next_obs = next_obs.permute(0, 3, 1, 2)
 
             buffer_pos += 1
             buffer_pos %= args.buffer_size
@@ -665,34 +866,26 @@ def main():
                 if info is None:
                     continue
 
-                # if args.track:
-                #     writer.add_scalar("charts/props_train_ret", info["episode"]["r"], global_step)
-                #     writer.add_scalar("charts/episode_length", info["episode"]["l"], global_step)
+                if args.track:
+                    writer.add_scalar("charts/props_train_ret", info["episode"]["r"], global_step)
+                    writer.add_scalar("charts/episode_length", info["episode"]["l"], global_step)
 
         # Reorder the replay buffer from youngest to oldest so we can reuse cleanRL's code to compute advantages
         if global_step < args.buffer_size:
             indices = np.arange(buffer_pos)
         else:
             indices = (np.arange(args.buffer_size) + buffer_pos) % args.buffer_size
-        obs = obs_buffer[indices]
-        actions = actions_buffer[indices]
+        # obs = obs_buffer[indices].reshape(-1,10,10,4)
+        # actions = actions_buffer[indices].reshape(-1,1)
+        # obs = obs_buffer[indices].permute(0, 3, 1, 2)
+        obs = obs_buffer[indices].reshape(-1, 7, 10, 10)
+        actions = actions_buffer[indices].reshape(-1, 1)
         rewards = rewards_buffer[indices]
         dones = dones_buffer[indices]
 
-        # We unnormalized observations, so normalize them before updating the target/behavior policies.
-        # env_obs_normalize.set_update(False)
-        # obs = env_obs_normalize.normalize(obs.cpu()).float()
-        # obs = obs.to(args.device)
-        # env_obs_normalize.set_update(True)
-
-        # We unnormalized rewards, so normalize them before updating the target policy.
-        # env_reward_normalize.set_update(False)
-        # rewards = env_reward_normalize.normalize(rewards).float()
-        # env_reward_normalize.set_update(True)
-
         # Recompute logprobs of all (s,a) in the replay buffer before every update, since they change after every update.
         with torch.no_grad():
-            _, logits, new_logprob, _, new_value = agent.get_action_and_value(obs, actions)
+            _, action_probs, new_logprob, _, new_value = agent.get_action_and_value(obs, actions)
             values = new_value.reshape(-1, envs.num_envs)
             logprobs = new_logprob.reshape(-1, envs.num_envs)
 
@@ -722,13 +915,13 @@ def main():
         # Compute sampling error *before* updating the target policy.
         if args.se:
             if global_step % (args.num_steps * args.se_freq) == 0:
-                compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, envs)
+                compute_se(args, agent, agent_props, obs, actions, advantages, sampling_error_logs, global_step, envs)
                 if args.se_ref:
-                    compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs)
+                    compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
                     sampling_error_logs[f'diff_kl_mle_target'].append(
                         sampling_error_logs[f'kl_mle_target'][-1] - sampling_error_logs[f'ref_kl_mle_target'][-1])
-                    print('(PROPS - On-policy) sampling error:', sampling_error_logs[f'diff_kl_mle_target'][-1])
-                    # print('On-policy sampling error:', sampling_error_logs[f'ref_kl_mle_target'])
+                    print('(PROPS - On-policy) sampling error:', sampling_error_logs[f'diff_kl_mle_target'])
+                    print('On-policy sampling error:', sampling_error_logs[f'ref_kl_mle_target'])
 
                 sampling_error_logs['t'].append(global_step)
                 print('PROPS sampling error:', sampling_error_logs[f'kl_mle_target'])
@@ -739,11 +932,6 @@ def main():
                     writer.add_scalar("charts/diff_kl_mle_target", sampling_error_logs[f'diff_kl_mle_target'][-1],
                                       global_step)
 
-        # best_arm_count = (actions_buffer.detach().numpy() == 999).sum()
-        # print('best arm count:', best_arm_count, )
-        if args.track:
-            best_arm_count = (actions_buffer.detach().numpy() == 999).sum()
-            writer.add_scalar("charts/best_arm_count", best_arm_count, global_step)
 
         # PPO update
         if global_step % args.num_steps == 0 and args.update_epochs > 0:
@@ -774,7 +962,7 @@ def main():
 
             # perform props behavior update and log stats
             props_stats = update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, advantages, global_step, args,
-                                       writer, logits)
+                                       writer, means, stds)
 
         # Evaluate agent performance
         if global_step % (args.num_steps * args.eval_freq) == 0:
