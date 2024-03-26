@@ -731,7 +731,7 @@ def main():
                     # print('On-policy sampling error:', sampling_error_logs[f'ref_kl_mle_target'])
 
                 sampling_error_logs['t'].append(global_step)
-                print('PROPS sampling error:', sampling_error_logs[f'kl_mle_target'])
+                # print('PROPS sampling error:', sampling_error_logs[f'kl_mle_target'])
                 np.savez(f'{args.save_dir}/stats.npz',
                          **sampling_error_logs)
 
