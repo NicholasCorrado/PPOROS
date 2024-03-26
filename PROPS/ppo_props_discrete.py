@@ -9,7 +9,7 @@ from distutils.util import strtobool
 
 import gymnasium as gym
 from gymnasium.wrappers import NormalizeReward
-from PROPS.utils import NormalizeObservation
+from utils import NormalizeObservation
 
 import custom_envs
 # import minatar
@@ -19,8 +19,8 @@ import torch.nn as nn
 import torch.optim as optim
 import yaml
 
-from PROPS.utils import Evaluate, AgentDiscrete, EvaluateDiscrete
-from PROPS.utils import get_latest_run_id, make_env, Agent
+from utils import Evaluate, AgentDiscrete, EvaluateDiscrete
+from utils import get_latest_run_id, make_env, Agent
 
 def make_env(env_id, seed, idx, capture_video, run_name, gamma):
     def thunk():
@@ -438,8 +438,8 @@ def compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, envs
 
     # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
     params = [p for p in agent_mle.actor.parameters()]
-    params[0].requires_grad = False
-    params[2].requires_grad = False
+    # params[0].requires_grad = False
+    # params[2].requires_grad = False
 
     optimizer_mle = optim.Adam(agent_mle.parameters(), lr=args.se_lr)
 
@@ -731,7 +731,7 @@ def main():
                     # print('On-policy sampling error:', sampling_error_logs[f'ref_kl_mle_target'])
 
                 sampling_error_logs['t'].append(global_step)
-                # print('PROPS sampling error:', sampling_error_logs[f'kl_mle_target'])
+                print('PROPS sampling error:', sampling_error_logs[f'kl_mle_target'])
                 np.savez(f'{args.save_dir}/stats.npz',
                          **sampling_error_logs)
 
