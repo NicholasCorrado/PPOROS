@@ -130,7 +130,7 @@ def parse_args():
                         help="If set, the PROPS policy is evaluated every props_eval ")
 
     # Sampling error (se)
-    parser.add_argument("--se", type=int, default=0,
+    parser.add_argument("--se", type=int, default=1,
                         help="If True, sampling error is computed every se_freq PPO updates.")
     parser.add_argument("--se-ref", type=int, default=0,
                         help="If True, on-policy sampling error is computed using the PPO policy sequence obtained while using PROPS. Only applies if se is True.")
@@ -138,7 +138,7 @@ def parse_args():
                         help="Adam optimizer learning rate used to compute the empirical (maximum likelihood) policy in sampling error computation.")
     parser.add_argument("--se-epochs", type=int, default=250,
                         help="Number of epochs to compute empirical (maximum likelihood) policy.")
-    parser.add_argument("--se-freq", type=int, default=None, help="Compute sampling error very se_freq PPO updates")
+    parser.add_argument("--se-freq", type=int, default=1, help="Compute sampling error very se_freq PPO updates")
 
     # loading pretrained models
     parser.add_argument("--policy-path", type=str, default=None, help="Path of pretrained policy to load")
@@ -446,7 +446,7 @@ def compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, envs
     obs_dim = obs.shape[-1]
     action_dim = actions.shape[-1]
     b_obs = obs.reshape(-1, obs_dim).to(args.device)
-    b_actions = actions.reshape(-1, action_dim).to(args.device)
+    b_actions = actions.reshape(-1).to(args.device)
 
     n = len(b_obs)
     b_inds = np.arange(n)
