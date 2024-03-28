@@ -324,7 +324,7 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
     b_logprobs = logprobs[start:end].reshape(-1)
     b_actions = actions[start:end].reshape((-1,) + envs.single_action_space.shape)
     # b_logits = logits[start:end].reshape(-1)  # action logits for PPO policy
-    b_probs = np.exp(logprobs)
+    b_probs = torch.exp(logprobs)
 
     if args.props_adv:
         b_advantages = advantages[start:end].reshape(-1)
@@ -731,7 +731,8 @@ def main():
                     # print('On-policy sampling error:', sampling_error_logs[f'ref_kl_mle_target'])
 
                 sampling_error_logs['t'].append(global_step)
-                print('PROPS sampling error:', sampling_error_logs[f'kl_mle_target'])
+                if not args.se_ref:
+                    print('PROPS sampling error:', sampling_error_logs[f'kl_mle_target'])
                 np.savez(f'{args.save_dir}/stats.npz',
                          **sampling_error_logs)
 
