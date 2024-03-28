@@ -320,11 +320,11 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
         end = args.buffer_size
 
     # flatten the replay buffer data
-    b_obs = obs[start:end].reshape((-1,) + envs.single_observation_space.shape)
-    b_logprobs = logprobs[start:end].reshape(-1)
-    b_actions = actions[start:end].reshape((-1,) + envs.single_action_space.shape)
+    b_obs = obs[start:end].reshape((-1,) + envs.single_observation_space.shape).to(args.device)
+    b_logprobs = logprobs[start:end].reshape(-1).to(args.device)
+    b_actions = actions[start:end].reshape((-1,) + envs.single_action_space.shape).to(args.device)
     # b_logits = logits[start:end].reshape(-1)  # action logits for PPO policy
-    b_probs = torch.exp(logprobs)
+    b_probs = torch.exp(logprobs).to(args.device)
 
     if args.props_adv:
         b_advantages = advantages[start:end].reshape(-1)
