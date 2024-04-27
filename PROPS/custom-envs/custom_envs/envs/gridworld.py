@@ -14,7 +14,7 @@ class GridWorldEnv(gym.Env):
     gamma = 1
 
     action_space = Discrete(4)
-    observation_space = Box(0, 1, (4*4,))
+    observation_space = Box(0, 1, (8*8,))
 
     def __init__(self, mean_factor=1., scale_noise=0.) -> None:
         super().__init__()
@@ -22,9 +22,9 @@ class GridWorldEnv(gym.Env):
         self.time_step = 0
         self.state = np.zeros(2)
 
-        self.terminal_state = np.array([3, 3])
-        self.trap_state = np.array([1, 1])
-        self.reward_state = np.array([1, 3])
+        self.terminal_state = np.array([7, 7])
+        self.trap_state = np.array([5, 5])
+        self.reward_state = np.array([1, 7])
 
         self.mean_factor = mean_factor
         self.scale_noise = scale_noise
@@ -38,7 +38,7 @@ class GridWorldEnv(gym.Env):
         i = action // 2
         j = action % 2
         self.state[i] += 1 if j else -1
-        self.state = self.state.clip(0, 3)
+        self.state = self.state.clip(0, 7)
 
         terminated = False
         truncated = self.time_step == GridWorldEnv.MaxStep
@@ -47,13 +47,13 @@ class GridWorldEnv(gym.Env):
             r = -1
         else:
             if (self.state == self.terminal_state).all():
-                r, terminated = 10, True
-            elif (self.state == self.trap_state).all():
-                r = -10
-            elif (self.state == self.reward_state).all():
-                r = 1
+                r, terminated = 1, True
+            # elif (self.state == self.trap_state).all():
+            #     r = -10
+            # elif (self.state == self.reward_state).all():
+            #     r = 1
             else:
-                r = -1
+                r = -0.1
 
         if terminated or truncated:
             self.ready = False
@@ -66,14 +66,14 @@ class GridWorldEnv(gym.Env):
 
     def to_observation(self):
         # return self.state.copy()
-        idx = self.state[0] * 4 + self.state[1]
-        obs = np.zeros(16)
+        idx = self.state[0] * 8 + self.state[1]
+        obs = np.zeros(64)
         obs[int(idx)] = 1
         return obs
 
     def to_state(self, state):
         # return state
-        return np.array([state // 4, state % 4])
+        return np.array([state // 8, state % 8])
 
     def reset(self,
         *,
@@ -101,14 +101,14 @@ class GridWorldEnv(gym.Env):
 
 def play():
     env = GridWorldEnv()
-    s = env.reset()
+    s, _ = env.reset()
     done = False
     while not done:
         env.render()
         a = env.action_space.sample()
         s_, r, terminated, truncated, info = env.step(a)
         done = terminated or truncated
-        print(a, r)
+        print(env.to_state(s), a, r)
         s = s_
 
 

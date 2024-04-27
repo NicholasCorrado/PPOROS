@@ -70,11 +70,25 @@ if __name__ == "__main__":
         ax = plt.subplot(1, 2, i)
         i+=1
 
+        root_dir = 'results_b1'
+
+
         path_dict_all = {}
         ### PROPS ##################################################################################################
-        key = rf'PPO with Adaptive Sampling (PROPS)'
+        key = rf'PROPS, $b=1$'
         algo = 'ppo_props'
-        results_dir = f'results/{env_id}/{algo}/b_1'
+        results_dir = f'{root_dir}/{env_id}/{algo}/b_1'
+        path_dict_aug = get_paths(
+            results_dir=results_dir,
+            key=key,
+            evaluations_name='evaluations')
+        if len(path_dict_aug[key]['paths']) > 0:
+            path_dict_all.update(path_dict_aug)
+
+        ### PROPS ##################################################################################################
+        key = rf'PROPS, $b=2$'
+        algo = 'ppo_props'
+        results_dir = f'{root_dir}/{env_id}/{algo}/b_2'
         path_dict_aug = get_paths(
             results_dir=results_dir,
             key=key,
@@ -83,15 +97,26 @@ if __name__ == "__main__":
             path_dict_all.update(path_dict_aug)
 
         ### PPO #########################################################################################
-        key = rf'PPO with On-Policy Sampling'
+        key = rf'PPO, $b=1$'
         algo = 'ppo_buffer'
-        results_dir = f'results/{env_id}/{algo}/b_1'
+        results_dir = f'{root_dir}/{env_id}/{algo}/b_1'
         path_dict_aug = get_paths(
             results_dir=results_dir,
             key=key,
             evaluations_name='evaluations')
         if len(path_dict_aug[key]['paths']) > 0:
             path_dict_all.update(path_dict_aug)
+
+        key = rf'PPO, $b=2$'
+        algo = 'ppo_buffer'
+        results_dir = f'{root_dir}/{env_id}/{algo}/b_2'
+        path_dict_aug = get_paths(
+            results_dir=results_dir,
+            key=key,
+            evaluations_name='evaluations')
+        if len(path_dict_aug[key]['paths']) > 0:
+            path_dict_all.update(path_dict_aug)
+
 
         plot(path_dict_all, name='returns')
         # plt.title(f'', fontsize=20)
@@ -101,6 +126,7 @@ if __name__ == "__main__":
         plt.yticks(fontsize=14)
         plt.grid(alpha=0.2)
         # plt.ylim(0.7,1.05)
+        # plt.yscale('log')
         # plt.xscale('log')
         # Use scientific notation for x-axis
         plt.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
@@ -121,7 +147,7 @@ if __name__ == "__main__":
         data_dict = get_data(path_dict_all)
         for k, v in data_dict.items():
             print(k, v.shape[0])
-        thresholds = np.linspace(0.5, 1.999, 101)
+        thresholds = np.linspace(-10, 1, 101)
 
         algorithms = list(data_dict.keys())
 
@@ -149,7 +175,7 @@ if __name__ == "__main__":
         # Fetch and plot the legend from one of the subplots.
         ax = fig.axes[0]
         handles, labels = ax.get_legend_handles_labels()
-        fig.legend(handles, labels, loc='upper center', ncol=2, fontsize=20)
+        fig.legend(handles, labels, loc='upper center', ncol=4, fontsize=20)
 
         plt.savefig(f'2step_results', dpi=300)
 

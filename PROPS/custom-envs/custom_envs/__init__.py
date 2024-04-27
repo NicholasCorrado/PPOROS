@@ -16,7 +16,7 @@ register(
 register(
     id="GridWorld-v0",
     entry_point="custom_envs.envs.gridworld:GridWorldEnv",
-    max_episode_steps=100,
+    max_episode_steps=30,
 )
 
 register(
