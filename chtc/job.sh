@@ -13,12 +13,16 @@ cd $CODENAME
 
 # install code
 ENVNAME=ppo-ros
-ENVDIR=${ENVNAME}_env
-cp /staging/ncorrado/${ENVNAME}_env.tar.gz .
+ENVDIR=${ENVNAME}
+cp /staging/ncorrado/${ENVNAME}.tar.gz .
 mkdir $ENVDIR
 tar -xzf ${ENVNAME}.tar.gz -C $ENVDIR
 rm ${ENVNAME}.tar.gz # remove env tarball
 source $ENVDIR/bin/activate
+
+pip install -e .
+pip install PROPS/custom_envs
+cd PROPS
 
 pid=${1}
 step=${2}

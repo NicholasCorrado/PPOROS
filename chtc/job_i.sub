@@ -1,6 +1,13 @@
 universe = vanilla
 log = interactive.log
 
+
+initial_dir = interactive
+log = logs/$(Cluster)_$(Process).log
+output = logs/$(Cluster)_$(Process).out
+error = logs/$(Cluster)_$(Process).err
+arguments = $(Process) $(Step) $(params)
+
 # Indicate which version of Linux (CentOS) you want to build your packages on
 requirements = (Target.HasCHTCStaging == true)
 request_cpus = 1
