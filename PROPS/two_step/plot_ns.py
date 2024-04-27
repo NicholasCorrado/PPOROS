@@ -63,11 +63,9 @@ if __name__ == "__main__":
 
 
     root_dir = 'condor/results'
-    root_dir = 'plr1/results'
+    root_dir = 'ns1/results'
 
-    # for lr in [0.01, 0.02, 0.025, 0.03, 0.04, 0.05, 0.075, 0.1, 0.,2, 0.3, 0.4, 0.5]:
-    for lr in [5e-2,5e-3,5e-4,1e-2,1e-3,1e-4]:
-
+    for ns in [2, 10, 20, 25, 50]:
         fig, ax = plt.subplots(nrows=1, ncols=2, figsize=(1 * 6 * 2, 1 * 4))
         i = 1
 
@@ -79,7 +77,7 @@ if __name__ == "__main__":
             ### PROPS ##################################################################################################
             key = rf'PROPS, $b=1$'
             algo = 'ppo_props'
-            results_dir = f'{root_dir}/{env_id}/{algo}/b_1/lr_{lr}'
+            results_dir = f'{root_dir}/{env_id}/{algo}/b_1/ns_{ns}'
             path_dict_aug = get_paths(
                 results_dir=results_dir,
                 key=key,
@@ -90,7 +88,7 @@ if __name__ == "__main__":
             ### PROPS ##################################################################################################
             key = rf'PROPS, $b=2$'
             algo = 'ppo_props'
-            results_dir = f'{root_dir}/{env_id}/{algo}/b_2/lr_{lr}'
+            results_dir = f'{root_dir}/{env_id}/{algo}/b_2/ns_{ns}'
             path_dict_aug = get_paths(
                 results_dir=results_dir,
                 key=key,
@@ -101,7 +99,7 @@ if __name__ == "__main__":
             ### PPO #########################################################################################
             key = rf'PPO, $b=1$'
             algo = 'ppo_buffer'
-            results_dir = f'{root_dir}/{env_id}/{algo}/b_1/lr_{lr}'
+            results_dir = f'{root_dir}/{env_id}/{algo}/b_1/ns_{ns}'
             path_dict_aug = get_paths(
                 results_dir=results_dir,
                 key=key,
@@ -111,7 +109,7 @@ if __name__ == "__main__":
 
             key = rf'PPO, $b=2$'
             algo = 'ppo_buffer'
-            results_dir = f'{root_dir}/{env_id}/{algo}/b_2/lr_{lr}'
+            results_dir = f'{root_dir}/{env_id}/{algo}/b_2/ns_{ns}'
             path_dict_aug = get_paths(
                 results_dir=results_dir,
                 key=key,
@@ -120,7 +118,7 @@ if __name__ == "__main__":
                 path_dict_all.update(path_dict_aug)
 
             plot(path_dict_all, name='returns')
-            plt.title(f'{lr}', fontsize=20)
+            plt.title(f'{ns}', fontsize=20)
             plt.xlabel('Timestep', fontsize=20)
             plt.ylabel('Average Return', fontsize=20)
             plt.xticks(fontsize=14)

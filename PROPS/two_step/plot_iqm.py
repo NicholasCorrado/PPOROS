@@ -81,7 +81,7 @@ if __name__ == "__main__":
         ### PROPS ##################################################################################################
         key = rf'PPO with Adaptive Sampling (PROPS)'
         algo = 'ppo_props'
-        results_dir = f'results/{env_id}/{algo}/b_1'
+        results_dir = f'results_final/{env_id}/{algo}/b_1'
         path_dict_aug = get_paths(
             results_dir=results_dir,
             key=key,
@@ -92,7 +92,7 @@ if __name__ == "__main__":
         ### PPO #########################################################################################
         key = rf'PPO with On-Policy Sampling'
         algo = 'ppo_buffer'
-        results_dir = f'results/{env_id}/{algo}/b_1'
+        results_dir = f'results_final/{env_id}/{algo}/b_1'
         path_dict_aug = get_paths(
             results_dir=results_dir,
             key=key,
@@ -109,7 +109,7 @@ if __name__ == "__main__":
         iqm = lambda scores: np.array([metrics.aggregate_iqm(scores[..., frame])
                                        for frame in range(scores.shape[-1])])
         iqm_scores, iqm_cis = rly.get_interval_estimates(
-            ale_frames_scores_dict, iqm, reps=2000)
+            ale_frames_scores_dict, iqm, reps=10000)
         plot_sample_efficiency_curve(
             timestep_dict, iqm_scores, iqm_cis, algorithms=algorithms,
             xlabel=r'Timestep',
@@ -164,7 +164,7 @@ if __name__ == "__main__":
         algorithms = list(data_dict.keys())
 
         score_distributions, score_distributions_cis = rly.create_performance_profile(
-            data_dict, thresholds, reps=100)
+            data_dict, thresholds, reps=10000)
         # Plot score distributions
         fig, ax = plt.subplots(ncols=1, figsize=(6, 6))
         plot_utils.plot_performance_profiles(
