@@ -1,0 +1,16 @@
+universe = vanilla
+log = interactive.log
+
+# Indicate which version of Linux (CentOS) you want to build your packages on
+requirements = (Target.HasCHTCStaging == true)
+request_cpus = 1
+request_memory = 3GB
+executable = job.sh
+
+#+WantGPULab = true
+#+GPUJobLength = "short"
+request_disk = 10GB
+#request_gpus = 1
+#require_gpus = Capability >= 8
+
+queue 1
