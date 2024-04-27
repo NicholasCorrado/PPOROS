@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 from distutils.util import strtobool
 
 import gymnasium as gym
-import custom_envs
+# import custom_envs
 import numpy as np
 import torch
 import torch.nn as nn
@@ -601,6 +601,7 @@ def main():
     ppo_logs = defaultdict(lambda: [])
     props_logs = defaultdict(lambda: [])
     sampling_error_logs = defaultdict(lambda: [])
+    times = []
 
     global_step = 0
     start_time = time.time()
@@ -773,20 +774,35 @@ def main():
                     ppo_logs[key].append(ppo_stats[key])
                 for key, val in props_stats.items():
                     props_logs[key].append(props_stats[key])
+            times.append(current_time)
 
             np.savez(
                 eval_module.log_path,
+                times=times,
                 timesteps=eval_module.evaluations_timesteps,
                 returns=eval_module.evaluations_returns,
                 successes=eval_module.evaluations_successes,
                 **ppo_logs,
-                **props_logs
+                **props_logs,
             )
 
             if args.track:
                 writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
                 if args.props_eval:
                     writer.add_scalar("charts/props_eval_return", props_ret, global_step)
+
+    current_time = time.time() - start_time
+    print(f'Time: {current_time}')
+
+    # np.savez(
+    #     eval_module.log_path,
+    #     time=current_time,
+    #     timesteps=eval_module.evaluations_timesteps,
+    #     returns=eval_module.evaluations_returns,
+    #     successes=eval_module.evaluations_successes,
+    #     **ppo_logs,
+    #     **props_logs,
+    # )
 
     envs.close()
 

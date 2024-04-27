@@ -1,3 +1,4 @@
+import itertools
 import os
 
 import numpy as np
@@ -25,6 +26,7 @@ def plot(save_dict, use_successes, updates=True, m=None, max_t=None, success_thr
     i = 0
 
     print(os.getcwd())
+    palette = itertools.cycle(seaborn.color_palette())
 
     for agent, info in save_dict.items():
         paths = info['paths']
@@ -51,40 +53,53 @@ def plot(save_dict, use_successes, updates=True, m=None, max_t=None, success_thr
             avg_of_avgs = np.average(avgs, axis=0)
             std = np.std(avgs, axis=0)
             N = len(avgs)
-            ci = std / np.sqrt(N)
+            ci = 1.96*std / np.sqrt(N)
             q05 = avg_of_avgs - ci
             q95 = avg_of_avgs + ci
 
         style_kwargs = {'linewidth': 1.5}
+        color = None
         if 'PPO' in agent:
             style_kwargs['color'] = 'k'
             style_kwargs['linestyle'] = ':'
             style_kwargs = {'linewidth': 1.5}
 
-        if 'PROPS' in agent:
+        if 'PROPS' == agent:
             style_kwargs['color'] = 'k'
             style_kwargs['linestyle'] = ':'
-            style_kwargs = {'linewidth': 3}
+            style_kwargs = {
+                'linewidth': 3,
+            }
+
+        if 'PROPS, no clip, no reg' in agent:
+            style_kwargs['color'] = 'k'
+            style_kwargs['linestyle'] = ':'
+            color = next(palette)
+            style_kwargs = {
+                'linewidth': 3,
+                'linestyle': '--',
+                # 'color': next(palette)
+            }
 
         if 'Buffer' in agent:
             style_kwargs['linestyle'] = '--'
 
-        plt.plot(t, avg_of_avgs, label=agent, **style_kwargs)
+        plt.plot(t, avg_of_avgs, label=agent, **style_kwargs, color=color)
         print(f'{agent}, {q05[1]:.3f}, {q95[1]:.3f}')
-        plt.fill_between(t, q05, q95, alpha=0.2)
+        plt.fill_between(t, q05, q95, alpha=0.2, color=color)
 
         i += 1
 
 
 if __name__ == "__main__":
 
-    seaborn.set_theme(style='whitegrid')
+    seaborn.set_theme(style='whitegrid', palette='colorblind')
     env_ids = ['Swimmer-v4', 'Hopper-v4', 'Walker2d-v4', 'HalfCheetah-v4', 'Ant-v4', 'Humanoid-v4']
     env_ids = ['Walker2d-v4']
 
     for policy in ['expert', 'random']:
         subplot_i = 1
-        fig = plt.figure(figsize=(1* 3, 3))
+        fig = plt.figure(figsize=(1* 3.7, 3.7))
 
         for env_id in env_ids:
             path_dict_all = {}
@@ -110,6 +125,15 @@ if __name__ == "__main__":
                 evaluations_name='stats')
             path_dict_all.update(path_dict_aug)
 
+            key = rf'PROPS, no clip, no reg'
+            algo = 'ppo_ros'
+            path_dict_aug = get_paths(
+                results_dir=f'data/se_fixed_ablation/results/{env_id}/{algo}/{policy}/b_16/no_clip_lambda',
+                key=key,
+                x_scale=1 / 256,
+                evaluations_name='stats')
+            path_dict_all.update(path_dict_aug)
+
             key = rf'ROS'
             algo = 'ros'
             ros_lr = 1e-5
@@ -121,7 +145,7 @@ if __name__ == "__main__":
             path_dict_all.update(path_dict_aug)
 
             algo = 'ppo_buffer'
-            key = rf'OS'
+            key = rf'On-Policy Sampling'
             path_dict_aug = get_paths(
                 results_dir=f'{root_dir}/{algo}/{policy}/b_16',
                 key=key,
@@ -130,14 +154,18 @@ if __name__ == "__main__":
             path_dict_all.update(path_dict_aug)
 
             plot(path_dict_all, use_successes=False)
-            plt.title(f'{env_id}', fontsize=16)
-            plt.xlabel('Batches', fontsize=16)
-            plt.ylabel(r'Sampling Error', fontsize=16)
-            plt.xticks(fontsize=12, ticks=[32, 64, 96, 128,])
-            plt.yticks(fontsize=12)
+            plt.title(f'{env_id}', fontsize=20)
+            plt.xlabel('Batches', fontsize=20)
+            plt.ylabel(r'Sampling Error', fontsize=20)
+            plt.xticks(fontsize=18, ticks=[32, 64, 96, 128,])
+            plt.yticks(fontsize=18)
             plt.yscale('log')
-            plt.legend()
             plt.tight_layout()
+            # fig.subplots_adjust(top=0.72)
+            # ax = fig.axes[0]
+            # handles, labels = ax.get_legend_handles_labels()
+            # fig.legend(handles, labels, loc='upper center', ncol=2, fontsize=10)
+            plt.legend()
 
             subplot_i += 1
 
