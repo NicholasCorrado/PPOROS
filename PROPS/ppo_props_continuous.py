@@ -27,103 +27,71 @@ def parse_args():
     # interpret False/True as strings instead of booleans.
 
     # weights and biases (wandb) parameters. Wandb is disabled by default.
-    parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-                        help="If toggled, this experiment will be tracked with Weights and Biases (wandb)")
-    parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"),
-                        help="Wandb experiment name")
+    parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="If toggled, this experiment will be tracked with Weights and Biases (wandb)")
+    parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"), help="Wandb experiment name")
     parser.add_argument("--wandb-project-name", type=str, default="cleanRL", help="Wandb project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="Wandb project entity (team)")
     parser.add_argument("--wandb-login-key", type=str, default=None, help="Wandb login key")
 
     # Saving and logging parameters
     parser.add_argument("--log-stats", type=int, default=1, help="If true, training statistics are logged")
-    parser.add_argument("--eval-freq", type=int, default=10,
-                        help="Evaluate PPO and/or PROPS policy every eval_freq PPO updates")
-    parser.add_argument("--eval-episodes", type=int, default=20,
-                        help="Number of episodes over which policies are evaluated")
-    parser.add_argument("--results-dir", "-f", type=str, default="results",
-                        help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
-    parser.add_argument("--results-subdir", "-s", type=str, default="",
-                        help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
-    parser.add_argument("--run-id", type=int, default=None,
-                        help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
+    parser.add_argument("--eval-freq", type=int, default=10, help="Evaluate PPO and/or PROPS policy every eval_freq PPO updates")
+    parser.add_argument("--eval-episodes", type=int, default=20, help="Number of episodes over which policies are evaluated")
+    parser.add_argument("--results-dir", "-f", type=str, default="results", help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
+    parser.add_argument("--results-subdir", "-s", type=str, default="", help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
+    parser.add_argument("--run-id", type=int, default=None, help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
 
     # General training parameters (both PROPS and PPO)
     parser.add_argument("--env-id", type=str, default="Goal2D-v0", help="Environment id")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="Number of timesteps to train")
     parser.add_argument("--seed", type=int, default=0, help="Seed of the experiment")
-    parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-                        help="If toggled, `torch.backends.cudnn.deterministic=False`")
-    parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-                        help="If toggled, cuda will be enabled by default")
+    parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="If toggled, `torch.backends.cudnn.deterministic=False`")
+    parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="If toggled, cuda will be enabled by default")
 
     # PPO hyperparameters
-    parser.add_argument("--num-steps", type=int, default=2048,
-                        help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
-    parser.add_argument("--buffer-batches", "-b", type=int, default=2,
-                        help="Number of PPO target batches to store in the replay buffer (b in paper)")
+    parser.add_argument("--num-steps", type=int, default=2048, help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
+    parser.add_argument("--buffer-batches", "-b", type=int, default=1, help="Number of PPO target batches to store in the replay buffer (b in paper)")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="PPO Adam optimizer learning rate")
-    parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-                        help="Toggle learning rate annealing for PPO policy and value networks")
+    parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for PPO policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor gamma")
-    parser.add_argument("--gae-lambda", type=float, default=0.95,
-                        help="General advantage estimation lambda (not the lambda used for PROPS")
+    parser.add_argument("--gae-lambda", type=float, default=0.95, help="General advantage estimation lambda (not the lambda used for PROPS")
     parser.add_argument("--num-minibatches", type=int, default=32, help="Number of minibatches updates for PPO update")
     parser.add_argument("--update-epochs", type=int, default=10, help="Number of epochs for PPO update")
-    parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-                        help="Toggles advantages normalization for PPO update")
-    parser.add_argument("--clip-coef", type=float, default=0.2,
-                        help="Surrogate clipping coefficient \epsilon for PPO update")
-    parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-                        help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
+    parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles advantages normalization for PPO update")
+    parser.add_argument("--clip-coef", type=float, default=0.2, help="Surrogate clipping coefficient \epsilon for PPO update")
+    parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
     parser.add_argument("--ent-coef", type=float, default=0.01, help="Entropy loss coefficient for PPO update")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="Value loss coefficient for PPO update")
-    parser.add_argument("--max-grad-norm", type=float, default=0.5,
-                        help="Maximum norm for gradient clipping for PPO update")
-    parser.add_argument("--target-kl", type=float, default=0.03,
-                        help="Target/cutoff KL divergence threshold for PPO update")
+    parser.add_argument("--max-grad-norm", type=float, default=0.5, help="Maximum norm for gradient clipping for PPO update")
+    parser.add_argument("--target-kl", type=float, default=0.03, help="Target/cutoff KL divergence threshold for PPO update")
 
     # PROPS/ROS hyperparameters
-    parser.add_argument("--props", type=int, default=1,
-                        help="If True, use PROPS to collect data, otherwise use on-policy sampling")
-    parser.add_argument("--ros", type=int, default=0,
-                        help="If True, use ROS to collect data, otherwise use on-policy sampling")
-    parser.add_argument("--props-num-steps", type=int, default=1024,
-                        help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-4,
-                        help="PROPS Adam optimizer learning rate")
-    parser.add_argument("--props-anneal-lr", type=lambda x: bool(strtobool(x)), default=0, nargs="?", const=False,
-                        help="Toggle learning rate annealing for PROPS policy")
-    parser.add_argument("--props-clip-coef", type=float, default=0.3,
-                        help="Surrogate clipping coefficient \epsilon_PROPS for PROPS")
-    parser.add_argument("--props-max-grad-norm", type=float, default=0.5,
-                        help="Maximum norm for gradient clipping for PROPS update")
-    parser.add_argument("--props-num-minibatches", type=int, default=16,
-                        help="Number of minibatches updates for PROPS update")
+    parser.add_argument("--props", type=int, default=0, help="If True, use PROPS to collect data, otherwise use on-policy sampling")
+    parser.add_argument("--reinforce", type=int, default=0, help="If True, use ROS to collect data, otherwise use on-policy sampling")
+    parser.add_argument("--ros", type=int, default=0, help="If True, use ROS to collect data, otherwise use on-policy sampling")
+    parser.add_argument("--props-num-steps", type=int, default=1024, help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-4, help="PROPS Adam optimizer learning rate")
+    parser.add_argument("--props-anneal-lr", type=lambda x: bool(strtobool(x)), default=0, nargs="?", const=False, help="Toggle learning rate annealing for PROPS policy")
+    parser.add_argument("--props-clip-coef", type=float, default=0.3, help="Surrogate clipping coefficient \epsilon_PROPS for PROPS")
+    parser.add_argument("--props-max-grad-norm", type=float, default=0.5, help="Maximum norm for gradient clipping for PROPS update")
+    parser.add_argument("--props-num-minibatches", type=int, default=16, help="Number of minibatches updates for PROPS update")
     parser.add_argument("--props-update-epochs", type=int, default=16, help="Number of epochs for PROPS update")
-    parser.add_argument("--props-target-kl", type=float, default=0.05,
-                        help="Target/cutoff KL divergence threshold for PROPS update")
+    parser.add_argument("--props-target-kl", type=float, default=0.05, help="Target/cutoff KL divergence threshold for PROPS update")
     parser.add_argument("--props-lambda", type=float, default=0.3, help="Regularization coefficient for PROPS update")
     parser.add_argument("--props-adv", type=int, default=False, help="If True, the PROPS update is weighted using the absolute advantage |A(s,a)|")
-    parser.add_argument("--props-eval", type=int, default=False,
-                        help="If set, the PROPS policy is evaluated every props_eval ")
+    parser.add_argument("--props-eval", type=int, default=False, help="If set, the PROPS policy is evaluated every props_eval ")
 
     # Sampling error (se)
-    parser.add_argument("--se", type=int, default=0,
-                        help="If True, sampling error is computed every se_freq PPO updates.")
-    parser.add_argument("--se-ref", type=int, default=0,
-                        help="If True, on-policy sampling error is computed using the PPO policy sequence obtained while using PROPS. Only applies if se is True.")
-    parser.add_argument("--se-lr", type=float, default=1e-3,
-                        help="Adam optimizer learning rate used to compute the empirical (maximum likelihood) policy in sampling error computation.")
-    parser.add_argument("--se-epochs", type=int, default=250,
-                        help="Number of epochs to compute empirical (maximum likelihood) policy.")
+    parser.add_argument("--se", type=int, default=0, help="If True, sampling error is computed every se_freq PPO updates.")
+    parser.add_argument("--se-ref", type=int, default=0, help="If True, on-policy sampling error is computed using the PPO policy sequence obtained while using PROPS. Only applies if se is True.")
+    parser.add_argument("--se-lr", type=float, default=1e-3, help="Adam optimizer learning rate used to compute the empirical (maximum likelihood) policy in sampling error computation.")
+    parser.add_argument("--se-epochs", type=int, default=250, help="Number of epochs to compute empirical (maximum likelihood) policy.")
     parser.add_argument("--se-freq", type=int, default=None, help="Compute sampling error very se_freq PPO updates")
 
     # loading pretrained models
     parser.add_argument("--policy-path", type=str, default=None, help="Path of pretrained policy to load")
-    parser.add_argument("--normalization-dir", type=str, default=None,
-                        help="Directory contatining normalization statistics of pretrained policy")
+    parser.add_argument("--normalization-dir", type=str, default=None, help="Directory contatining normalization statistics of pretrained policy")
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -140,12 +108,22 @@ def parse_args():
         else:
             args.seed = np.random.randint(2 ** 32 - 1)
 
-    if args.props:
-        save_dir = f"{args.results_dir}/{args.env_id}/ppo_props/{args.results_subdir}"
-        if args.ros:
-            save_dir = f"{args.results_dir}/{args.env_id}/ros/{args.results_subdir}"
+    # set save_dir
+    assert not (args.props == 1 and args.ros == 1)
+    if args.reinforce:
+        algo = 'reinforce'
+        args.update_epochs = 1
+        args.minibatch_size = args.buffer_size
     else:
-        save_dir = f"{args.results_dir}/{args.env_id}/ppo_buffer/{args.results_subdir}"
+        algo = 'ppo'
+
+    if args.props:
+        sampling = 'props'
+    elif args.ros:
+        sampling = 'ros'
+    else:
+        sampling = 'on_policy'
+    save_dir = f"{args.results_dir}/{args.env_id}/{algo}_{sampling}/{args.results_subdir}"
 
     if args.run_id is not None:
         save_dir += f"/run_{args.run_id}"
@@ -213,9 +191,12 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
             # Policy loss
-            pg_loss1 = -mb_advantages * ratio
-            pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-            pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+            if args.reinforce:
+                pg_loss = (-mb_advantages * ratio).mean()
+            else:
+                pg_loss1 = -mb_advantages * ratio
+                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             # Value loss
             newvalue = newvalue.view(-1)
