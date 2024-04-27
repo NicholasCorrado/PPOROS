@@ -68,15 +68,20 @@ def plot(save_dict, use_successes, updates=True, m=None, max_t=None, success_thr
         if 'Buffer' in agent:
             style_kwargs['linestyle'] = '--'
 
-        plt.plot(t, avg_of_avgs, label=agent, **style_kwargs)
-        plt.fill_between(t, q05, q95, alpha=0.2)
+        if agent in ['ROS', 'PROPS']:
+            style_kwargs['linestyle'] = 'None'
+            plt.plot(t, avg_of_avgs, label=agent, **style_kwargs)
+            plt.fill_between(t, q05, q95, alpha=0)
+        else:
+            plt.plot(t, avg_of_avgs, label=agent, **style_kwargs)
+            plt.fill_between(t, q05, q95, alpha=0.2)
 
         i += 1
 
 
 if __name__ == "__main__":
 
-    seaborn.set_theme(style='whitegrid')
+    seaborn.set_theme(style='whitegrid', palette='colorblind')
     env_ids = ['Swimmer-v4', 'Hopper-v4', 'Walker2d-v4', 'HalfCheetah-v4', 'Ant-v4', 'Humanoid-v4']
 
     for policy in ['expert', 'random']:
@@ -120,7 +125,7 @@ if __name__ == "__main__":
             path_dict_all.update(path_dict_aug)
 
             algo = 'ppo_buffer'
-            key = rf'OS'
+            key = rf'On-Policy Sampling'
             path_dict_aug = get_paths(
                 results_dir=f'{root_dir}/{algo}/{policy}/b_16',
                 key=key,

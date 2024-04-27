@@ -50,7 +50,7 @@ def plot(save_dict, name, m=100000, success_threshold=None):
 
             std = np.std(avgs, axis=0)
             N = len(avgs)
-            ci = 1 * std / np.sqrt(N)
+            ci = 1.96 * std / np.sqrt(N)
             q05 = avg_of_avgs + ci
             q95 = avg_of_avgs - ci
 
@@ -75,6 +75,7 @@ def plot(save_dict, name, m=100000, success_threshold=None):
         elif agent == 'PPO-Privileged':
             style_kwargs['linestyle'] = '-.'
 
+        # style_kwargs['linestyle'] = 'None'
 
         if m:
             x = x[:m]
@@ -83,17 +84,27 @@ def plot(save_dict, name, m=100000, success_threshold=None):
             q95 = q95[:m]
 
         l = len(avg_of_avgs)
-        plt.plot(x[:l], avg_of_avgs, label=agent, **style_kwargs)
-        if style_kwargs['linestyle'] == 'None':
+
+        # plt.plot(x[:l], avg_of_avgs, label=agent, **style_kwargs)
+        # if style_kwargs['linestyle'] == 'None':
+        #     plt.fill_between(x[:l], q05, q95, alpha=0)
+        # else:
+        #     plt.fill_between(x[:l], q05, q95, alpha=0.2)
+
+        if agent in ['ROS', 'PROPS']:
+            style_kwargs['linestyle'] = 'None'
+            plt.plot(x[:l], avg_of_avgs, label=agent, **style_kwargs)
             plt.fill_between(x[:l], q05, q95, alpha=0)
         else:
+            plt.plot(x[:l], avg_of_avgs, label=agent, **style_kwargs)
             plt.fill_between(x[:l], q05, q95, alpha=0.2)
+
 
         i += 1
 
 if __name__ == "__main__":
 
-    seaborn.set_theme(style='whitegrid')
+    seaborn.set_theme(style='whitegrid', palette='colorblind')
     env_ids = ['Swimmer-v4', 'Hopper-v4','HalfCheetah-v4', 'Walker2d-v4', 'Ant-v4', 'Humanoid-v4']
 
     fig = plt.figure(figsize=(6 * 5, 6))
@@ -126,7 +137,7 @@ if __name__ == "__main__":
                                         continue
 
                                     ### ON-POLICY SAMPLING ERROR #######################################################
-                                    key = rf'OS'
+                                    key = rf'On-Policy Sampling'
                                     path_dict_aug = get_paths(
                                         results_dir=results_dir,
                                         key=key,

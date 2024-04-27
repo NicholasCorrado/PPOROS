@@ -9,102 +9,80 @@ from PROPS.plotting.utils import get_paths, plot, load_data
 from rliable import library as rly
 from rliable import metrics
 from rliable import plot_utils
-from rliable.plot_utils import _decorate_axis
+from rliable.plot_utils import _decorate_axis, _annotate_and_decorate_axis
 
 
-
-def plot_interval_estimates(point_estimates,
-                            interval_estimates,
-                            metric_names,
-                            algorithms=None,
-                            colors=None,
-                            color_palette='colorblind',
-                            max_ticks=4,
-                            ax=None,
-                            subfigure_width=3.4,
-                            row_height=0.37,
-                            xlabel_y_coordinate=-0.1,
-                            xlabel='Normalized Score',
-                            **kwargs):
-  """Plots various metrics with confidence intervals.
+def plot_sample_efficiency_curve(frame_dict,
+                                 point_estimates,
+                                 interval_estimates,
+                                 algorithms,
+                                 colors=None,
+                                 color_palette='colorblind',
+                                 figsize=(7, 5),
+                                 xlabel=r'Number of Frames (in millions)',
+                                 ylabel='Aggregate Human Normalized Score',
+                                 ax=None,
+                                 labelsize='xx-large',
+                                 ticklabelsize='xx-large',
+                                 **kwargs):
+  """Plots an aggregate metric with CIs as a function of environment frames.
 
   Args:
+    frames: Array or list containing environment frames to mark on the x-axis.
     point_estimates: Dictionary mapping algorithm to a list or array of point
-      estimates of the metrics to plot.
+      estimates of the metric corresponding to the values in `frames`.
     interval_estimates: Dictionary mapping algorithms to interval estimates
       corresponding to the `point_estimates`. Typically, consists of stratified
       bootstrap CIs.
-    metric_names: Names of the metrics corresponding to `point_estimates`.
     algorithms: List of methods used for plotting. If None, defaults to all the
       keys in `point_estimates`.
-    colors: Maps each method to a color. If None, then this mapping is created
-      based on `color_palette`.
+    colors: Dictionary that maps each algorithm to a color. If None, then this
+      mapping is created based on `color_palette`.
     color_palette: `seaborn.color_palette` object for mapping each method to a
       color.
-    max_ticks: Find nice tick locations with no more than `max_ticks`. Passed to
-      `plt.MaxNLocator`.
-    subfigure_width: Width of each subfigure.
-    row_height: Height of each row in a subfigure.
-    xlabel_y_coordinate: y-coordinate of the x-axis label.
+    figsize: Size of the figure passed to `matplotlib.subplots`. Only used when
+      `ax` is None.
     xlabel: Label for the x-axis.
+    ylabel: Label for the y-axis.
+    ax: `matplotlib.axes` object.
+    labelsize: Font size of the x-axis label.
+    ticklabelsize: Font size of the ticks.
     **kwargs: Arbitrary keyword arguments.
 
   Returns:
-    fig: A matplotlib Figure.
-    axes: `axes.Axes` or array of Axes.
+    `axes.Axes` object containing the plot.
   """
-
+  if ax is None:
+    _, ax = plt.subplots(figsize=figsize)
   if algorithms is None:
-    algorithms = point_estimates.keys()
-  try:
-    num_metrics = len(point_estimates[algorithms[0]])
-  except:
-      return None, None
-  # figsize = (subfigure_width * num_metrics, row_height * len(algorithms))
-  # fig, axes = plt.subplots(nrows=1, ncols=num_metrics, figsize=figsize)
+    algorithms = list(point_estimates.keys())
   if colors is None:
     color_palette = seaborn.color_palette(color_palette, n_colors=len(algorithms))
     colors = dict(zip(algorithms, color_palette))
-  h = kwargs.pop('interval_height', 0.6)
 
-  # for idx, metric_name in enumerate(metric_names):
-  idx = 0
-  metric_name = 'IQM'
-  for alg_idx, algorithm in enumerate(algorithms):
-    ax = ax
-      # Plot interval estimates.
-    lower, upper = interval_estimates[algorithm][:, idx]
-    ax.barh(
-          y=alg_idx,
-          width=upper - lower,
-          height=h,
-          left=lower,
-          color=colors[algorithm],
-          alpha=0.75,
-          label=algorithm)
-    # Plot point estimates.
-    ax.vlines(
-          x=point_estimates[algorithm][idx],
-          ymin=alg_idx - (7.5 * h / 16),
-          ymax=alg_idx + (6 * h / 16),
-          label=algorithm,
-          color='k',
-          alpha=0.5)
+  for algorithm in algorithms:
+    frames = frame_dict[algorithm]
+    metric_values = point_estimates[algorithm]
+    lower, upper = interval_estimates[algorithm]
+    ax.plot(
+        frames,
+        metric_values,
+        color=colors[algorithm],
+        # marker=kwargs.pop('marker', 'o'),
+        linewidth=kwargs.pop('linewidth', 2),
+        label=algorithm)
+    ax.fill_between(
+        frames, y1=lower, y2=upper, color=colors[algorithm], alpha=0.2)
 
-    ax.set_yticks(list(range(len(algorithms))))
-    ax.xaxis.set_major_locator(plt.MaxNLocator(max_ticks))
-    # if idx != 0:
-    # ax.set_yticks([])
-    # else:
-    # ax.set_yticklabels(algorithms, fontsize='xx-large')
-    # ax.set_title(metric_name, fontsize='xx-large')
-    ax.tick_params(axis='both', which='major')
-    _decorate_axis(ax, ticklabelsize='xx-large', wrect=5)
-    ax.spines['left'].set_visible(False)
-    ax.grid(True, axis='x', alpha=0.25)
-  fig.text(0.4, xlabel_y_coordinate, xlabel, ha='center', fontsize='xx-large')
-  plt.subplots_adjust(wspace=kwargs.pop('wspace', 0.11), left=0.0)
-  return fig
+  return _annotate_and_decorate_axis(
+      ax,
+      xlabel=xlabel,
+      ylabel=ylabel,
+      labelsize=labelsize,
+      ticklabelsize=ticklabelsize,
+      **kwargs)
+
+
 
 def load_data(paths, name, success_threshold=None):
     avgs = []
@@ -137,14 +115,16 @@ def load_data(paths, name, success_threshold=None):
     return t, np.array(avgs)
 
 def get_data(path_dict):
-  results = {}
+  returns = {}
+  timesteps = {}
   for agent, info in path_dict.items():
     paths = info['paths']
 
     t, avgs = load_data(paths, name='returns')
-    results[agent] = avgs
+    returns[agent] = avgs
+    timesteps[agent] = t
 
-  return results
+  return returns, timesteps
 
 PROPS_PATHS = {
     'Swimmer-v4': {
@@ -236,7 +216,7 @@ if __name__ == "__main__":
     env_ids = ['Swimmer-v4', 'Hopper-v4', 'HalfCheetah-v4', 'Walker2d-v4', 'Ant-v4', 'Humanoid-v4']
     # env_ids = ['Ant-v4']
 
-    fig, axes = plt.subplots(2, 3, figsize=(3*3,2*3))
+    fig, axes = plt.subplots(2, 3, figsize=(3*4,2*5))
     axes = axes.flatten()
     i = 0
     for env_id in env_ids:
@@ -296,34 +276,64 @@ if __name__ == "__main__":
         except:
             pass
 
-        ### AW-PROPS ##################################################################################################
-        # key = rf'AW-PROPS'
-        # algo = 'ppo_ros'
-        # try:
-        #     results_dir = AWPROPS_PATHS[env_id][2]['path']
-        # except:
-        #     continue
-        # path_dict_aug = get_paths(
-        #     results_dir=results_dir,
-        #     key=key,
-        #     evaluations_name='evaluations')
-        # path_dict_all.update(path_dict_aug)
+        algo = 'ppo_ros'
 
-        ### PPO-PRIVILEGED #########################################################################################
-        # key = rf'PPO-Privileged'
-        # algo = 'ppo_buffer'
-        # for s in [1024, 2048, 4096, 8192]:
-        #     for lr in [1e-3, 1e-4]:
-        #         for kl in [0.03]:
-        #             results_dir = f'data/rl/ppo_privileged/results/{env_id}/{algo}/b_1/s_{s}/lr_{lr}/kl_{kl}/e_10'
-        #
-        #             path_dict_aug = get_paths(
-        #                 results_dir=results_dir,
-        #                 key=key,
-        #                 x_scale=0.5,
-        #                 evaluations_name='evaluations')
-        #             if len(path_dict_aug[key]['paths']) == 0: continue
-        #             path_dict_all.update(path_dict_aug)
+        root_dir = f'/Users/nicholascorrado/code/PPOROS_data_final/PPOROS/PPOROS/plotting/5_14/ros_no_clip_final/results/{env_id}'
+        max_t = None
+
+        for s in [1024, 2048, 4096, 8192]:
+            for rs in [256, 512, 1024, 2048, 4096, 8192]:
+                for lr in [1e-3, 1e-4]:
+                    for lr_ros in [1e-3, 1e-4, 1e-5]:
+                        for ros_lambda in [0, 0.01, 0.1, 0.3]:
+                            for kl in [0.01, 0.03, 0.05, 0.1]:
+                                for c in [99999]:
+                                    for mb in [8, 16, 32]:
+                                        ros_epochs = 16
+                                        key = rf'PROPS, no clipping'
+                                        path_dict_aug = get_paths(
+                                            results_dir=f'{root_dir}/{algo}/'
+                                                        f'b_{2}/'
+                                            # f'l_{ros_lambda}/'
+                                                        f's_{s}/s_{rs}/'
+                                                        f'lr_{lr}/lr_{lr_ros}/'
+                                                        f'kl_0.03/kl_{kl}/'
+                                                        f'l_{ros_lambda}/'
+                                                        f'e_{ros_epochs}/mb_{mb}/c_{c}/a_{0}',
+                                            key=key,
+                                            max_t=max_t,
+                                            evaluations_name='evaluations')
+                                        if len(path_dict_aug[key]['paths']) == 0: continue
+                                        path_dict_all.update(path_dict_aug)
+
+        root_dir = f'/Users/nicholascorrado/code/PPOROS_data_final/PPOROS/PPOROS/plotting/5_14/ros_no_clip_final/results/{env_id}'
+        # root_dir = f'../5_14/ros_no_clip_final/results/{env_id}'
+
+        for s in [1024, 2048, 4096, 8192]:
+            for rs in [256, 512, 1024, 2048, 4096, 8192]:
+                for lr in [1e-3, 1e-4]:
+                    for lr_ros in [1e-3, 1e-4, 1e-5]:
+                        for ros_lambda in [0, 0.01, 0.1, 0.3]:
+                            for kl in [0.01, 0.03, 0.05, 0.1]:
+                                for c in [0.3]:
+                                    for mb in [8, 16, 32]:
+                                        ros_epochs = 16
+                                        key = rf'PROPS, no regularization'
+                                        path_dict_aug = get_paths(
+                                            results_dir=f'{root_dir}/{algo}/'
+                                                        f'b_{2}/'
+                                            # f'l_{ros_lambda}/'
+                                                        f's_{s}/s_{rs}/'
+                                                        f'lr_{lr}/lr_{lr_ros}/'
+                                                        f'kl_0.03/kl_{kl}/'
+                                                        f'l_{ros_lambda}/'
+                                                        f'e_{ros_epochs}/mb_{mb}/c_{c}/a_{0}',
+                                            key=key,
+                                            max_t=max_t,
+                                            evaluations_name='evaluations')
+                                        if len(path_dict_aug[key]['paths']) == 0: continue
+                                        path_dict_all.update(path_dict_aug)
+
 
 
         ### PPO-BUFFER #############################################################################################
@@ -377,65 +387,66 @@ if __name__ == "__main__":
 
 
         # plot(path_dict_all, name='returns')
-        plt.title(f'{env_id}', fontsize='xx-large')
+        # plt.title(f'{env_id}', fontsize='xx-large')
         # plt.xlabel('Timestep', fontsize='xx-large')
         # plt.ylabel('Return', fontsize=20)
         # plt.xticks(fontsize=14)
         # plt.yticks(fontsize=14)
+
+
+
+        x_scale = {
+            'Swimmer-v4': 2,
+            'Hopper-v4': 2,
+            'HalfCheetah-v4': 4,
+            'Walker2d-v4': 2,
+            'Ant-v4': 4,
+            'Humanoid-v4': 2
+        }
+
+        return_dict, timestep_dict = get_data(path_dict_all)
+        for k, v in return_dict.items():
+            print(k, v.shape[0])
+            if 'Priv' in k:
+                timestep_dict[k] = 0.5*timestep_dict[k]
+
+        algorithms = list(return_dict.keys())
+        ale_frames_scores_dict = {algorithm: score for algorithm, score
+                                  in return_dict.items()}
+        iqm = lambda scores: np.array([metrics.aggregate_iqm(scores[..., frame])
+                                       for frame in range(scores.shape[-1])])
+        iqm_scores, iqm_cis = rly.get_interval_estimates(
+            ale_frames_scores_dict, iqm, reps=2000)
+        plot_sample_efficiency_curve(
+            timestep_dict, iqm_scores, iqm_cis, algorithms=algorithms,
+            ax=axes[i-1],
+            xlabel=r'Timestep',
+            ylabel='')
+        plt.title(f'{env_id}', fontsize='xx-large')
+        if i%3 == 1:
+            plt.ylabel('IQM Return')
         #
         # # Use scientific notation for x-axis
-        # plt.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
-        # # set fontsize of 1e6
-        # ax.xaxis.get_offset_text().set_fontsize(14)
+        plt.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
+        # set fontsize of 1e6
+        ax.xaxis.get_offset_text().set_fontsize('xx-large')
+        #
+        plt.tight_layout()
+        # plt.show()
 
 
-        data_dict = get_data(path_dict_all)
-        for k, v in data_dict.items():
-            print(k, v.shape[0])
-
-        IQM = lambda x: metrics.aggregate_iqm(
-            np.mean(x[:, -5:], axis=0)
-        )
-        # IQM = lambda x: metrics.aggregate_iqm(np.max(x,axis=0))
-        # d = data_dict['PPO'][:, -5:]
-        # m = d.mean(axis=-1)
-        # print(data_dict['PPO'][:, -1:].mean(axis=0))
-        # IQM = lambda x: metrics.aggregate_mean(x[:, -1:])
-        aggregate_func = lambda x: np.array([IQM(x)])
-        aggregate_scores, aggregate_interval_estimates = rly.get_interval_estimates(
-            data_dict, aggregate_func, reps=5000)
-
-        # ax = plt.subplot(nrows, ncols, i)
-        ax = axes[i - 1]
-        fig = plot_interval_estimates(
-            aggregate_scores,
-            aggregate_interval_estimates,
-            metric_names=[f'{env_id}'],
-            algorithms=['PROPS','PPO-Buffer', 'PPO'],
-            xlabel_y_coordinate=-0.16,
-            ax=ax,
-            subfigure_width=7,
-            row_height=2,
-            xlabel='Human Normalized Score')
-
-        if i % 3 == 1:
-            axes[i-1].set_yticklabels(['PROPS', 'PPO-Buffer', 'PPO'], fontsize='xx-large')
-        else:
-            axes[i-1].set_yticklabels(['', '', '', ], fontsize='xx-large')
-
-    fig.supxlabel('IQM Return', fontsize='xx-large')
 
     plt.tight_layout()
     # Push plots down to make room for the the legend
-    fig.subplots_adjust(left=0.2, top=0.9)
+    fig.subplots_adjust(left=0.1, top=0.85)
     #
     # # Fetch and plot the legend from one of the subplots.
-    # ax = fig.axes[0]
-    # handles, labels = ax.get_legend_handles_labels()
-    # fig.legend(handles, labels, loc='upper center', ncol=4, fontsize=17)
+    ax = fig.axes[0]
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(handles, labels, loc='upper center', ncol=3, fontsize='xx-large')
     #
     save_dir = f'figures'
-    save_name = f'return_iqm.png'
+    save_name = f'return_iqm_ablation.png'
     os.makedirs(save_dir, exist_ok=True)
     plt.savefig(f'{save_dir}/{save_name}', dpi=300)
     #

@@ -53,7 +53,7 @@ def plot(save_dict, use_successes, updates=True, m=None, max_t=None, success_thr
             avg_of_avgs = np.average(avgs, axis=0)
             std = np.std(avgs, axis=0)
             N = len(avgs)
-            ci = std / np.sqrt(N)
+            ci = 1.96*std / np.sqrt(N)
             q05 = avg_of_avgs - ci
             q95 = avg_of_avgs + ci
 
@@ -93,7 +93,7 @@ def plot(save_dict, use_successes, updates=True, m=None, max_t=None, success_thr
 
 if __name__ == "__main__":
 
-    seaborn.set_theme(style='whitegrid')
+    seaborn.set_theme(style='whitegrid', palette='colorblind')
     env_ids = ['Swimmer-v4', 'Hopper-v4', 'Walker2d-v4', 'HalfCheetah-v4', 'Ant-v4', 'Humanoid-v4']
     env_ids = ['Walker2d-v4']
 
@@ -145,7 +145,7 @@ if __name__ == "__main__":
             path_dict_all.update(path_dict_aug)
 
             algo = 'ppo_buffer'
-            key = rf'OS'
+            key = rf'On-Policy Sampling'
             path_dict_aug = get_paths(
                 results_dir=f'{root_dir}/{algo}/{policy}/b_16',
                 key=key,
@@ -154,18 +154,18 @@ if __name__ == "__main__":
             path_dict_all.update(path_dict_aug)
 
             plot(path_dict_all, use_successes=False)
-            plt.title(f'{env_id}', fontsize=16)
-            plt.xlabel('Batches', fontsize=16)
-            plt.ylabel(r'Sampling Error', fontsize=16)
-            plt.xticks(fontsize=12, ticks=[32, 64, 96, 128,])
-            plt.yticks(fontsize=12)
+            plt.title(f'{env_id}', fontsize=20)
+            plt.xlabel('Batches', fontsize=20)
+            plt.ylabel(r'Sampling Error', fontsize=20)
+            plt.xticks(fontsize=18, ticks=[32, 64, 96, 128,])
+            plt.yticks(fontsize=18)
             plt.yscale('log')
             plt.tight_layout()
-            fig.subplots_adjust(top=0.72)
-            ax = fig.axes[0]
-            handles, labels = ax.get_legend_handles_labels()
-            fig.legend(handles, labels, loc='upper center', ncol=2, fontsize=12)
-            # plt.legend()
+            # fig.subplots_adjust(top=0.72)
+            # ax = fig.axes[0]
+            # handles, labels = ax.get_legend_handles_labels()
+            # fig.legend(handles, labels, loc='upper center', ncol=2, fontsize=10)
+            plt.legend()
 
             subplot_i += 1
 

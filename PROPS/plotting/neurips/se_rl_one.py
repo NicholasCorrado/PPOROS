@@ -22,7 +22,7 @@ ylims = {
 
 if __name__ == "__main__":
 
-    seaborn.set_theme(style='whitegrid')
+    seaborn.set_theme(style='whitegrid', palette='colorblind')
     env_ids = ['Humanoid-v4']
 
 
@@ -58,7 +58,7 @@ if __name__ == "__main__":
                                         continue
 
                                     ### ON-POLICY SAMPLING ERROR #######################################################
-                                    key = rf'OS'
+                                    key = rf'On-Policy Sampling'
                                     path_dict_aug = get_paths(
                                         results_dir=results_dir,
                                         key=key,
@@ -82,10 +82,10 @@ if __name__ == "__main__":
                                     ax.xaxis.get_offset_text().set_fontsize(12)
                                     plt.tight_layout()
 
-    fig.subplots_adjust(top=0.77)
+    fig.subplots_adjust(top=0.7)
     ax = fig.axes[0]
     handles, labels = ax.get_legend_handles_labels()
-    fig.legend(handles, labels, loc='upper center', ncol=5, fontsize=12)
+    fig.legend(handles, labels, loc='upper center', ncol=1, fontsize=12)
 
 
     save_dir = f'figures'

@@ -72,16 +72,44 @@ if __name__ == "__main__":
         ### PROPS ##################################################################################################
         key = rf'PROPS'
         algo = 'ppo_ros'
-        try:
-            results_dir = PROPS_PATHS[env_id][2]['path']
-            results_dir = PROPS_B1_PATHS[env_id][1]['path']
-            path_dict_aug = get_paths(
-                results_dir=results_dir,
-                key=key,
-                evaluations_name='evaluations')
-            path_dict_all.update(path_dict_aug)
-        except:
-            pass
+        # try:
+        #     results_dir = PROPS_PATHS[env_id][2]['path']
+        #     results_dir = PROPS_B1_PATHS[env_id][1]['path']
+        #     path_dict_aug = get_paths(
+        #         results_dir=results_dir,
+        #         key=key,
+        #         evaluations_name='evaluations')
+        #     path_dict_all.update(path_dict_aug)
+        # except:
+        #     pass
+
+
+        algo = 'ppo_ros'
+        ns = [1024, 2048, 4096, 8192]
+        lrs = [1e-3, 1e-4]
+        ros_lrs = [1e-3, 1e-4, 1e-5]
+
+        for b in [1]:
+            for s in ns:
+                for lr in lrs:
+                    for rlr in ros_lrs:
+                        for ros_update_epochs in [16]:
+                            for ros_mb in [16, 32]:
+                                for l in [0.01, 0.1, 0.3]:
+                                    for rs in [256, 512, 1024]:
+                                        for rkl in [0.03, 0.05, 0.1]:
+
+
+                                            # results_dir = f'../more_2/results/{env_id}/{algo}/b_{b}/s_{s}/s_{rs}/lr_{lr}/lr_{rlr}/kl_0.03/kl_{rkl}/l_{l}/e_16/mb_{ros_mb}/c_0.3/a_0'
+                                            results_dir = f'../props_b1_50/results/{env_id}/{algo}/b_{b}/s_{s}/s_{rs}/lr_{lr}/lr_{rlr}/kl_0.03/kl_{rkl}/l_{l}/e_16/mb_{ros_mb}/c_0.3/a_0'
+
+                                            key = rf'PROPS: {s},{rs}; {lr},{rlr}; {rkl}; {l}, {ros_mb}'
+
+                                            path_dict_aug = get_paths(
+                                                results_dir=results_dir,
+                                                key=key,
+                                                evaluations_name='evaluations')
+                                            path_dict_all.update(path_dict_aug)
 
         ### PPO ####################################################################################################
         key = 'PPO'

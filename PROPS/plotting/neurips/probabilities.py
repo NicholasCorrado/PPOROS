@@ -1,24 +1,138 @@
 import os
 
+import numpy as np
 import seaborn
 from matplotlib import pyplot as plt
+from matplotlib.ticker import MaxNLocator
 
 from PROPS.plotting.utils import get_paths, plot, load_data
 
 from rliable import library as rly
 from rliable import metrics
 from rliable import plot_utils
+from rliable.plot_utils import _decorate_axis, _annotate_and_decorate_axis
 
 
-def get_data(path_dict, field_name='normalized_return'):
-  results = {}
+def plot_sample_efficiency_curve(frame_dict,
+                                 point_estimates,
+                                 interval_estimates,
+                                 algorithms,
+                                 colors=None,
+                                 color_palette='colorblind',
+                                 figsize=(7, 5),
+                                 xlabel=r'Number of Frames (in millions)',
+                                 ylabel='Aggregate Human Normalized Score',
+                                 ax=None,
+                                 labelsize='xx-large',
+                                 ticklabelsize='xx-large',
+                                 **kwargs):
+  """Plots an aggregate metric with CIs as a function of environment frames.
+
+  Args:
+    frames: Array or list containing environment frames to mark on the x-axis.
+    point_estimates: Dictionary mapping algorithm to a list or array of point
+      estimates of the metric corresponding to the values in `frames`.
+    interval_estimates: Dictionary mapping algorithms to interval estimates
+      corresponding to the `point_estimates`. Typically, consists of stratified
+      bootstrap CIs.
+    algorithms: List of methods used for plotting. If None, defaults to all the
+      keys in `point_estimates`.
+    colors: Dictionary that maps each algorithm to a color. If None, then this
+      mapping is created based on `color_palette`.
+    color_palette: `seaborn.color_palette` object for mapping each method to a
+      color.
+    figsize: Size of the figure passed to `matplotlib.subplots`. Only used when
+      `ax` is None.
+    xlabel: Label for the x-axis.
+    ylabel: Label for the y-axis.
+    ax: `matplotlib.axes` object.
+    labelsize: Font size of the x-axis label.
+    ticklabelsize: Font size of the ticks.
+    **kwargs: Arbitrary keyword arguments.
+
+  Returns:
+    `axes.Axes` object containing the plot.
+  """
+  if ax is None:
+    _, ax = plt.subplots(figsize=figsize)
+  if algorithms is None:
+    algorithms = list(point_estimates.keys())
+  if colors is None:
+    color_palette = seaborn.color_palette(color_palette, n_colors=len(algorithms))
+    colors = dict(zip(algorithms, color_palette))
+
+  for algorithm in algorithms:
+    frames = frame_dict[algorithm]
+    metric_values = point_estimates[algorithm]
+    lower, upper = interval_estimates[algorithm]
+    ls = None
+    alpha = 0.2
+    # if algorithm in ['PROPS']:
+    #     ls = 'None'
+    #     alpha = 0
+
+    ax.plot(
+        frames,
+        metric_values,
+        color=colors[algorithm],
+        # marker=kwargs.pop('marker', 'o'),
+        linewidth=kwargs.pop('linewidth', 2),
+        label=algorithm,
+        linestyle=ls)
+    ax.fill_between(
+        frames, y1=lower, y2=upper, color=colors[algorithm], alpha=alpha)
+
+  return _annotate_and_decorate_axis(
+      ax,
+      xlabel=xlabel,
+      ylabel=ylabel,
+      labelsize=labelsize,
+      ticklabelsize=ticklabelsize,
+      **kwargs)
+
+
+
+def load_data(paths, name, success_threshold=None):
+    avgs = []
+    for path in paths:
+        with np.load(path) as data:
+            # for key in data:
+            #     print(key)
+
+            try:
+                t = data['t']
+            except:
+                t = data['timesteps']
+
+            if name == 'se_normalized':
+                r = np.clip(data['diff_kl_mle_target']/np.abs(data['ref_kl_mle_target']), -10000, 100000)
+            elif name == 'diff_kl_mle_target':
+                r = np.clip(data['diff_kl_mle_target'], -10000,10000)
+            else:
+                r = data[name]
+            if success_threshold is not None:
+                r = r > success_threshold
+
+            if len(r.shape) > 1:
+                avg = np.average(r, axis=1)
+            else:
+                avg = r
+
+            avgs.append(avg)
+
+    return t, np.array(avgs)
+
+def get_data(path_dict):
+  returns = {}
+  timesteps = {}
   for agent, info in path_dict.items():
     paths = info['paths']
 
     t, avgs = load_data(paths, name='returns')
-    results[agent] = avgs
+    returns[agent] = avgs
+    timesteps[agent] = t
 
-  return results
+  return returns, timesteps
 
 PROPS_PATHS = {
     'Swimmer-v4': {
@@ -55,7 +169,6 @@ PROPS_PATHS = {
             'path': '/Users/nicholascorrado/code/josiah/PPOROS/PROPS/plotting/props_b1/results/Ant-v4/ppo_props/b_1/s_1024/s_256/lr_0.0001/lr_0.0001/kl_0.03/kl_0.03/l_0.1/c_0.3',
         },
         2: {
-            # 'path': 'data/rl/props/results/Ant-v4/ppo_ros/b_2/s_2048/s_256/lr_0.0001/lr_0.001/kl_0.03/kl_0.03/l_0.1/e_16/mb_16/c_0.05/a_0',
             # 'path': '/Users/nicholascorrado/code/josiah/PPOROS/PROPS/plotting/iclr/a_b2/results/Ant-v4/ppo_props/b_2/s_2048/s_256/lr_0.0001/lr_0.001/kl_0.03/kl_0.03/l_0.01/c_0.3',
             'path': '/Users/nicholascorrado/code/josiah/PPOROS/PROPS/plotting/iclr/a_b2/results/Ant-v4/ppo_props/b_2/s_1024/s_256/lr_0.0001/lr_0.001/kl_0.03/kl_0.03/l_0.3/c_0.3',
             'path2': '/Users/nicholascorrado/code/josiah/PPOROS/PROPS/plotting/iclr/a_b2/results/Ant-v4/ppo_props/b_2/s_1024/s_256/lr_0.0001/lr_0.001/kl_0.03/kl_0.05/l_0.3/c_0.3',
@@ -107,14 +220,15 @@ AWPROPS_PATHS = {
 
 if __name__ == "__main__":
 
-    seaborn.set_theme(style='whitegrid')
+    seaborn.set_theme(style='whitegrid', palette='colorblind')
     env_ids = ['Swimmer-v4', 'Hopper-v4', 'HalfCheetah-v4', 'Walker2d-v4', 'Ant-v4', 'Humanoid-v4']
-    # env_ids = ['Humanoid-v4']
     # env_ids = ['Ant-v4']
 
-    fig = plt.figure(figsize=(3*5,2*5))
-    i = 1
+    fig, axes = plt.subplots(2, 3, figsize=(3*4,2*2))
+    axes = axes.flatten()
+    i = 0
     for env_id in env_ids:
+        i+=1
         ax = plt.subplot(2, 3, i)
 
         path_dict_all = {}
@@ -129,16 +243,6 @@ if __name__ == "__main__":
                 key=key,
                 evaluations_name='evaluations')
             path_dict_all.update(path_dict_aug)
-        except:
-            pass
-        try:
-            results_dir = PROPS_PATHS[env_id][2]['path2']
-            path_dict_aug = get_paths(
-                results_dir=results_dir,
-                key=key,
-                evaluations_name='evaluations')
-            if len(path_dict_aug[key]['paths']) > 0:
-                path_dict_all[key]['paths'].extend(path_dict_aug[key]['paths'])
         except:
             pass
 
@@ -157,7 +261,7 @@ if __name__ == "__main__":
                                     for rs in [256, 512, 1024]:
                                         for rkl in [0.03, 0.05, 0.1]:
 
-
+                                            results_dir = f'../more/results/{env_id}/{algo}/b_{b}/s_{s}/s_{rs}/lr_{lr}/lr_{rlr}/kl_0.03/kl_{rkl}/l_{l}/e_16/mb_{ros_mb}/c_0.3/a_0'
                                             # results_dir = f'../more_2/results/{env_id}/{algo}/b_{b}/s_{s}/s_{rs}/lr_{lr}/lr_{rlr}/kl_0.03/kl_{rkl}/l_{l}/e_16/mb_{ros_mb}/c_0.3/a_0'
                                             results_dir = f'../props_b1_50/results/{env_id}/{algo}/b_{b}/s_{s}/s_{rs}/lr_{lr}/lr_{rlr}/kl_0.03/kl_{rkl}/l_{l}/e_16/mb_{ros_mb}/c_0.3/a_0'
 
@@ -168,6 +272,17 @@ if __name__ == "__main__":
                                                 key=key,
                                                 evaluations_name='evaluations')
                                             path_dict_all[key]['paths'].extend(path_dict_aug[key]['paths'])
+
+        try:
+            results_dir = PROPS_PATHS[env_id][2]['path2']
+            path_dict_aug = get_paths(
+                results_dir=results_dir,
+                key=key,
+                evaluations_name='evaluations')
+            if len(path_dict_aug[key]['paths']) > 0:
+                path_dict_all[key]['paths'].extend(path_dict_aug[key]['paths'])
+        except:
+            pass
 
         ### AW-PROPS ##################################################################################################
         # key = rf'AW-PROPS'
@@ -248,52 +363,130 @@ if __name__ == "__main__":
                     # if len(path_dict_aug[key]['paths']) > 0:
                     #     path_dict_all[key]['paths'].extend(path_dict_aug[key]['paths'])
 
-        # key = rf'SAC'
-        # algo = 'sac'
-        # try:
-        #     # results_dir = f'../rebuttal/sac_2/results/{env_id}/{algo}/lr_0.0003/lr_0.001/bs_256/a_0'
-        #     if env_id in ['Hopper-v4']:
-        #         results_dir = f'../rebuttal/sac_hopper/results/{env_id}/{algo}/lr_0.0003/lr_0.001/bs_256/a_0'
-        #     elif env_id in ['HalfCheetah-v4', 'Walker2d-v4', 'Ant-v4']:
-        #         results_dir = f'../rebuttal/sac_larger_budget/results/{env_id}/{algo}/lr_0.001/lr_0.003/bs_256/a_0'
-        #     else:
-        #         results_dir = f'../rebuttal/sac_2/results/{env_id}/{algo}/lr_0.0003/lr_0.001/bs_256/a_0'
-        #     path_dict_aug = get_paths(
-        #         results_dir=results_dir,
-        #         key=key,
-        #         evaluations_name='evaluations')
+        ### SAC ####################################################################################################
+
+        # key = f'SAC'
+        # # for (alr, clr) in [(1e-3, 3e-3), (3e-4, 1e-3)]:
+        # if env_id in ['Walker2d-v4']:
+        #     alr, clr = 1e-3, 3e-3
+        # else:
+        #     alr, clr = 3e-4, 1e-3
+        # results_dir = f'../iclr/sac/results/{env_id}/sac/lr_{alr}/lr_{clr}/bs_256/a_0'
+        # path_dict_aug = get_paths(
+        #     results_dir=results_dir,
+        #     key=key,
+        #     evaluations_name='evaluations')
+        # if len(path_dict_aug[key]['paths']) > 0:
         #     path_dict_all.update(path_dict_aug)
-        # except:
-        #     pass
 
-        plot(path_dict_all, name='returns')
-        plt.title(f'{env_id}', fontsize=20)
-        # if i > 3:
-        #     plt.xlabel('Timestep', fontsize=20)
-        if i%3 == 1:
-            plt.ylabel('Return', fontsize=20)
-        fig.supxlabel('Timestep', fontsize=20)
-        plt.xticks(fontsize=14)
-        plt.yticks(fontsize=14)
+        # plot(path_dict_all, name='returns')
+        # plt.title(f'{env_id}', fontsize='xx-large')
+        # plt.xlabel('Timestep', fontsize='xx-large')
+        # plt.ylabel('Return', fontsize=20)
+        # plt.xticks(fontsize=14)
+        # plt.yticks(fontsize=14)
 
-        # Use scientific notation for x-axis
-        plt.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
-        # set fontsize of 1e6
-        ax.xaxis.get_offset_text().set_fontsize(14)
+        ### GePPO ##################################################################################################
 
-        plt.tight_layout()
-        i += 1
+        # for n in [1024, 2048]:
+        #     # for lr in [1e-3, 1e-4]:
+        #     #     for B in [2]:
+        #             for M in [2]:
+        #                 if 'Swim' in env_id:
+        #                     lr = 1e-3
+        #                     B=2
+        #                 if 'Hop' in env_id:
+        #                     lr = 1e-4
+        #                     B=1
+        #                 if 'Walk' in env_id:
+        #                     lr = 1e-4
+        #                     B=2
+        #                 if 'Half' in env_id:
+        #                     lr = 1e-3
+        #                     B=2
+        #
+        #                 key = rf'GePPO'
+        #                 algo = 'geppo'
+        #                 root_dir = '/Users/nicholascorrado/code/tmp/GePPO/geppo/' + f'condor/results/{env_id}/geppo'
+        #                 results_dir = f'{root_dir}/n_{n}/lr_{lr}/B_{B}/M_{M}/v_1/a_1'
+        #                 print(results_dir)
+        #                 path_dict_aug = get_paths(
+        #                     results_dir=results_dir,
+        #                     key=key,
+        #                     evaluations_name='evaluations')
+        #                 if len(path_dict_aug[key]['paths']) > 0:
+        #                     path_dict_all.update(path_dict_aug)
+        #
+
+        x_scale = {
+            'Swimmer-v4': 2,
+            'Hopper-v4': 2,
+            'HalfCheetah-v4': 4,
+            'Walker2d-v4': 2,
+            'Ant-v4': 4,
+            'Humanoid-v4': 2
+        }
+
+        return_dict, timestep_dict = get_data(path_dict_all)
+        for k, v in return_dict.items():
+            print(k, v.shape[0])
+            if 'Priv' in k:
+                timestep_dict[k] = 0.5*timestep_dict[k]
+
+
+        algorithms = list(return_dict.keys())
+
+        our_algorithm = 'PROPS'  # @param ['SimPLe', 'DER', 'OTR', 'CURL', 'DrQ(ε)', 'SPR']
+        all_pairs = {}
+        for alg in (algorithms[::-1]):
+            if alg == our_algorithm:
+                continue
+            pair_name = f'{our_algorithm}_{alg}'
+            all_pairs[pair_name] = (
+                return_dict[our_algorithm][:, [-1]], return_dict[alg][:, [-1]])
+
+        probabilities, probability_cis = {}, {}
+        reps = 1000
+        probabilities, probability_cis = rly.get_interval_estimates(
+            all_pairs, metrics.probability_of_improvement, reps=reps)
+
+        h = 0.6
+        algorithm_labels = []
+
+        for j, (alg_pair, prob) in enumerate(probabilities.items()):
+            _, alg1 = alg_pair.split('_')
+            algorithm_labels.append(alg1)
+            (l, u) = probability_cis[alg_pair]
+            ax.barh(y=j, width=u - l, height=h,
+                    left=l,
+                    alpha=0.75)
+            ax.vlines(x=prob, ymin=j - 7.5 * h / 16, ymax=j + (6 * h / 16),
+                      color='k', alpha=0.85)
+        ax.set_yticks(range(len(algorithm_labels)))
+        ax.set_yticklabels(algorithm_labels)
+
+        ax.set_title(f'{env_id}', size='xx-large')
+        plot_utils._annotate_and_decorate_axis(ax, labelsize='xx-large', ticklabelsize='xx-large')
+        if (i-1) % 3 == 0:
+            ax.set_ylabel(r'Algorithm $Y$', size='xx-large')
+        ax.xaxis.set_major_locator(MaxNLocator(3))
+        ax.set_xlabel(fr'P({our_algorithm} > $Y$)', size='xx-large')
+        # fig.subplots_adjust(wspace=0.25, hspace=0.45)
+        ax.set_xlim(0.30, 0.8)
+
+    plt.tight_layout()
     # Push plots down to make room for the the legend
-    fig.subplots_adjust(left=0.1, top=0.9)
-
-    # Fetch and plot the legend from one of the subplots.
-    ax = fig.axes[0]
-    handles, labels = ax.get_legend_handles_labels()
-    fig.legend(handles, labels, loc='upper center', ncol=3, fontsize='x-large')
-
+    # fig.subplots_adjust(left=0.1, top=0.88)
+    #
+    # # Fetch and plot the legend from one of the subplots.
+    # ax = fig.axes[0]
+    # handles, labels = ax.get_legend_handles_labels()
+    # fig.legend(handles, labels, loc='upper center', ncol=4, fontsize='xx-large')
+    # #
     save_dir = f'figures'
-    save_name = f'return.png'
+    save_name = f'prob_improvment.png'
     os.makedirs(save_dir, exist_ok=True)
-    plt.savefig(f'{save_dir}/{save_name}', dpi=600)
+    plt.savefig(f'{save_dir}/{save_name}', dpi=300)
+    #
 
     plt.show()
