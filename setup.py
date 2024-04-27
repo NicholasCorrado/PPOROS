@@ -1,3 +1,3 @@
 from setuptools import setup, find_packages
 
-setup(name='PPOROS', version='1.0', packages=find_packages())
+setup(name='PROPS', version='1.0', packages=find_packages())
