@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.optim as optim
 import yaml
 
-from utils import Evaluate
+from utils import Evaluate, ConfigLoader
 from utils import get_latest_run_id, make_env, Agent
 
 
@@ -42,12 +42,13 @@ def parse_args():
     parser.add_argument("--run-id", type=int, default=None, help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
 
     # General training parameters (both PROPS and PPO)
-    parser.add_argument("--env-id", type=str, default="Goal2D-v0", help="Environment id")
+    parser.add_argument("--env-id", type=str, default="Hopper-v4", help="Environment id")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
     parser.add_argument("--total-timesteps", type=int, default=1000000, help="Number of timesteps to train")
     parser.add_argument("--seed", type=int, default=0, help="Seed of the experiment")
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="If toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="If toggled, cuda will be enabled by default")
+    parser.add_argument("--config", type=str, default=None, help="Path to config file")
 
     # PPO hyperparameters
     parser.add_argument("--num-steps", type=int, default=2048, help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
@@ -93,11 +94,27 @@ def parse_args():
     parser.add_argument("--policy-path", type=str, default=None, help="Path of pretrained policy to load")
     parser.add_argument("--normalization-dir", type=str, default=None, help="Directory contatining normalization statistics of pretrained policy")
 
+
+
     args = parser.parse_args()
+    if args.config:
+        with open(args.config) as f:
+            try:
+                # args = yaml.load(f, Loader=ConfigLoader)
+                args = yaml.unsafe_load(f)
+                # # otherwise we use the same run_id and seed for every experiment
+                # args_loaded.run_id = args.run_id
+                # args_loaded.seed = args.seed
+            except yaml.YAMLError as exc:
+                print(exc)
+                exit(1)
+
     args.batch_size = int(args.num_envs * args.num_steps)
     args.buffer_size = args.buffer_batches * args.batch_size
     args.minibatch_size = int(args.buffer_size // args.num_minibatches)
     args.props_minibatch_size = int((args.buffer_size - args.props_num_steps) // args.props_num_minibatches)
+
+
 
     # cuda support. Currently does not work with normalization
     args.device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
@@ -114,9 +131,9 @@ def parse_args():
         algo = 'reinforce'
         args.update_epochs = 1
         args.minibatch_size = args.buffer_size
+        args.props_num_steps = args.num_steps # to force num_props_updates = num_updates
     else:
         algo = 'ppo'
-
     if args.props:
         sampling = 'props'
     elif args.ros:

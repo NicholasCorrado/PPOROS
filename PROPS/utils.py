@@ -1,3 +1,4 @@
+import argparse
 import copy
 import glob
 import os
@@ -7,9 +8,22 @@ import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
+import yaml
 from gymnasium.wrappers.normalize import RunningMeanStd
 from torch.distributions import Normal, Categorical
 
+class ConfigLoader(yaml.SafeLoader):
+
+    def __init__(self, stream):
+        super().__init__(stream)
+        self.add_constructor('!python/object:argparse.Namespace', construct_argpase_namespace)
+        self.add_constructor('!python/object/apply:torch.device', construct_device)
+
+def construct_device(device):
+    return torch.device(device)
+
+def construct_argpase_namespace(**kwargs):
+    argparse.Namespace(**kwargs)
 
 def get_latest_run_id(save_dir: str) -> int:
     max_run_id = 0

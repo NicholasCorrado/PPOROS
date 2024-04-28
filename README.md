@@ -6,11 +6,11 @@ conda create -n props python=3.9
 conda activate props
 pip install -e PROPS
 
-conda install pytorch cpuonly -c pytorch
-conda install stable-baselines3
-conda install tensorboard
-conda install mujoco
-conda install imageio
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install stable-baselines3
+pip install tensorboard
+pip install mujoco
+pip install imageio
 pip install gymnasium
 pip install pyyaml
 ```
