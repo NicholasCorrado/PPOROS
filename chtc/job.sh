@@ -3,6 +3,11 @@
 # have job exit if any command returns with non-zero exit status (aka failure)
 set -e
 
+pid=${1}
+step=${2}
+cmd=`tr '*' ' ' <<< $3`
+echo $cmd
+
 CODENAME=PROPS
 export PATH
 
@@ -12,21 +17,20 @@ rm ${CODENAME}.tar.gz # remove code tarball
 cd $CODENAME
 
 # install code
-ENVNAME=ppo-ros
-ENVDIR=${ENVNAME}_env
-cp /staging/ncorrado/${ENVNAME}_env.tar.gz .
+ENVNAME=props
+ENVDIR=${ENVNAME}
+cp /staging/ncorrado/${ENVNAME}.tar.gz .
 mkdir $ENVDIR
 tar -xzf ${ENVNAME}.tar.gz -C $ENVDIR
 rm ${ENVNAME}.tar.gz # remove env tarball
 source $ENVDIR/bin/activate
 
-pid=${1}
-step=${2}
-command_fragment=`tr '*' ' ' <<< $3`
-echo $command
+pip install -e .
+pip install -e PROPS/custom-envs
+cd PROPS
 
-python3 -u ${command_fragment} --run-id ${step} --seed ${step}
-#$($command --seed $step --run-id $step)
+python3 -u ${cmd} --run-id ${step} --seed ${step}
+#$($cmd --seed $step --run-id $step)
 #$($command)
 
 tar -czvf results_${pid}.tar.gz results/*
