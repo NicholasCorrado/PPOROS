@@ -97,18 +97,6 @@ def parse_args():
 
 
     args = parser.parse_args()
-    if args.config:
-        with open(args.config) as f:
-            try:
-                # args = yaml.load(f, Loader=ConfigLoader)
-                args = yaml.unsafe_load(f)
-                # # otherwise we use the same run_id and seed for every experiment
-                # args_loaded.run_id = args.run_id
-                # args_loaded.seed = args.seed
-            except yaml.YAMLError as exc:
-                print(exc)
-                exit(1)
-
     args.batch_size = int(args.num_envs * args.num_steps)
     args.buffer_size = args.buffer_batches * args.batch_size
     args.minibatch_size = int(args.buffer_size // args.num_minibatches)
@@ -140,20 +128,46 @@ def parse_args():
         sampling = 'ros'
     else:
         sampling = 'on_policy'
-    save_dir = f"{args.results_dir}/{args.env_id}/{algo}_{sampling}/{args.results_subdir}"
+    args.algo = f'{algo}_{sampling}'
+    args.save_dir = f"{args.results_dir}/{args.env_id}/{args.algo}/{args.results_subdir}"
+
+
+    if args.config:
+        with open(args.config) as f:
+            try:
+                # args = yaml.load(f, Loader=ConfigLoader)
+                args_loaded = yaml.unsafe_load(f)
+                # # otherwise we use the same run_id and seed for every experiment
+                args_loaded.seed = args.seed
+                args_loaded.run_id = args.run_id
+                args_loaded.save_dir = f"{args_loaded.results_dir}/{args_loaded.env_id}/{args_loaded.algo}/{args_loaded.results_subdir}"
+
+                # if args_loaded.run_id is not None:
+                #     args_loaded.save_dir += f"/run_{args.run_id}"
+                # else:
+                #     run_id = get_latest_run_id(save_dir=save_dir) + 1
+                #     args_loaded.save_dir += f"/run_{run_id}"
+
+                args = args_loaded
+            except yaml.YAMLError as exc:
+                print(exc)
+                exit(1)
 
     if args.run_id is not None:
-        save_dir += f"/run_{args.run_id}"
+        args.save_dir += f"/run_{args.run_id}"
     else:
-        run_id = get_latest_run_id(save_dir=save_dir) + 1
-        save_dir += f"/run_{run_id}"
-    args.save_dir = save_dir
+        run_id = get_latest_run_id(save_dir=args.save_dir) + 1
+        args.save_dir += f"/run_{run_id}"
+
+
+
 
     # dump training config to save dir
     os.makedirs(args.save_dir, exist_ok=True)
     with open(os.path.join(args.save_dir, "config.yml"), "w") as f:
         yaml.dump(args, f, sort_keys=True)
 
+    print(args.se)
     return args
 
 
@@ -415,9 +429,9 @@ def compute_se(args, agent, agent_props, obs, actions, advantages, sampling_erro
     agent_mle = copy.deepcopy(agent)
 
     # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
-    params = [p for p in agent_mle.actor_mean.parameters()]
-    params[0].requires_grad = False
-    params[2].requires_grad = False
+    # params = [p for p in agent_mle.actor_mean.parameters()]
+    # params[0].requires_grad = False
+    # params[2].requires_grad = False
 
     optimizer_mle = optim.Adam(agent_mle.parameters(), lr=args.se_lr)
 
@@ -448,18 +462,13 @@ def compute_se(args, agent, agent_props, obs, actions, advantages, sampling_erro
 
     with torch.no_grad():
         _, mean_mle, std_mle, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
+        _, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
+        _, mean_props, std_props, logprobs_props, ent_props = agent_props.get_action_and_info(b_obs, b_actions, clamp=True)
 
         # Compute sampling error
-        _, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
-        b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
-        b_advantages = torch.abs(b_advantages)
-        logratio = logprobs_mle - logprobs_target
-        approx_kl_mle_target = (b_advantages * logratio).mean()
-
+        approx_kl_mle_target = (logprobs_mle - logprobs_target).mean()
         # Compute KL divergence between PROPS and PPO policy
-        _, mean_props, std_props, logprobs_props, ent_props = agent_props.get_action_and_info(b_obs, b_actions, clamp=True)
-        logratio = logprobs_target - logprobs_props
-        approx_kl_props_target = (torch.abs(b_advantages) * logratio).mean()
+        approx_kl_props_target = (logprobs_target - logprobs_props).mean()
 
         sampling_error_logs[f'{prefix}kl_mle_target'].append(approx_kl_mle_target.item())
         sampling_error_logs[f'{prefix}kl_props_target'].append(approx_kl_props_target.item())
