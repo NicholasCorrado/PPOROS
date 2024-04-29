@@ -1,9 +1,9 @@
 !!python/object:argparse.Namespace
 algo: reinforce_on_policy
 anneal_lr: false
-batch_size: 1024
+batch_size: 128
 buffer_batches: 1
-buffer_size: 1024
+buffer_size: 128
 clip_coef: 0.2
 clip_vloss: true
 cuda: true
@@ -16,15 +16,15 @@ eval_freq: 50
 exp_name: ppo_props_continuous
 gae_lambda: 0.95
 gamma: 0.99
-learning_rate: 0.001
+learning_rate: 0.0001
 log_stats: 1
 max_grad_norm: 0.5
-minibatch_size: 1024
+minibatch_size: 128
 norm_adv: true
 normalization_dir: null
 num_envs: 1
 num_minibatches: 32
-num_steps: 1024
+num_steps: 128
 policy_path: null
 props: 0
 props_adv: false
@@ -36,7 +36,7 @@ props_learning_rate: 0.0001
 props_max_grad_norm: 0.5
 props_minibatch_size: 0
 props_num_minibatches: 16
-props_num_steps: 1024
+props_num_steps: 128
 props_target_kl: 0.05
 props_update_epochs: 16
 reinforce: 1

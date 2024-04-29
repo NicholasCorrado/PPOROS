@@ -10,7 +10,7 @@ cuda: true
 device: !!python/object/apply:torch.device
 - cpu
 ent_coef: 0.01
-env_id: Reacher-v4
+env_id: Humanoid-v4
 eval_episodes: 20
 eval_freq: 50
 exp_name: ppo_props_continuous
@@ -41,10 +41,10 @@ props_target_kl: 0.05
 props_update_epochs: 16
 reinforce: 1
 results_dir: results
-results_subdir: b_1
+results_subdir: b_1/s_1024/lr_0.001/
 ros: 0
 run_id: 0
-save_dir: results/Reacher-v4/reinforce_on_policy/b_1
+save_dir: results/Humanoid-v4/reinforce_on_policy/b_1/s_1024/lr_0.001//run_0
 se: 0
 se_epochs: 250
 se_freq: null
