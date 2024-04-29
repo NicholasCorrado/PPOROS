@@ -71,15 +71,15 @@ def parse_args():
     parser.add_argument("--props", type=int, default=0, help="If True, use PROPS to collect data, otherwise use on-policy sampling")
     parser.add_argument("--reinforce", type=int, default=0, help="If True, use ROS to collect data, otherwise use on-policy sampling")
     parser.add_argument("--ros", type=int, default=0, help="If True, use ROS to collect data, otherwise use on-policy sampling")
-    parser.add_argument("--props-num-steps", type=int, default=1024, help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--props-num-steps", type=int, default=64, help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
     parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-4, help="PROPS Adam optimizer learning rate")
     parser.add_argument("--props-anneal-lr", type=lambda x: bool(strtobool(x)), default=0, nargs="?", const=False, help="Toggle learning rate annealing for PROPS policy")
     parser.add_argument("--props-clip-coef", type=float, default=0.3, help="Surrogate clipping coefficient \epsilon_PROPS for PROPS")
     parser.add_argument("--props-max-grad-norm", type=float, default=0.5, help="Maximum norm for gradient clipping for PROPS update")
-    parser.add_argument("--props-num-minibatches", type=int, default=16, help="Number of minibatches updates for PROPS update")
+    parser.add_argument("--props-num-minibatches", type=int, default=8, help="Number of minibatches updates for PROPS update")
     parser.add_argument("--props-update-epochs", type=int, default=16, help="Number of epochs for PROPS update")
-    parser.add_argument("--props-target-kl", type=float, default=0.05, help="Target/cutoff KL divergence threshold for PROPS update")
-    parser.add_argument("--props-lambda", type=float, default=0.3, help="Regularization coefficient for PROPS update")
+    parser.add_argument("--props-target-kl", type=float, default=0.1, help="Target/cutoff KL divergence threshold for PROPS update")
+    parser.add_argument("--props-lambda", type=float, default=0.1, help="Regularization coefficient for PROPS update")
     parser.add_argument("--props-adv", type=int, default=False, help="If True, the PROPS update is weighted using the absolute advantage |A(s,a)|")
     parser.add_argument("--props-eval", type=int, default=False, help="If set, the PROPS policy is evaluated every props_eval ")
 
@@ -119,7 +119,6 @@ def parse_args():
         algo = 'reinforce'
         args.update_epochs = 1
         args.minibatch_size = args.buffer_size
-        args.props_num_steps = args.num_steps # to force num_props_updates = num_updates
     else:
         algo = 'ppo'
     if args.props:
@@ -128,6 +127,7 @@ def parse_args():
         sampling = 'ros'
     else:
         sampling = 'on_policy'
+        args.props_num_steps = args.num_steps # to force num_props_updates = num_updates
     args.algo = f'{algo}_{sampling}'
     args.save_dir = f"{args.results_dir}/{args.env_id}/{args.algo}/{args.results_subdir}"
 
