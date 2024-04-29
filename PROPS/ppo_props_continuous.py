@@ -53,7 +53,7 @@ def parse_args():
     # PPO hyperparameters
     parser.add_argument("--num-steps", type=int, default=2048, help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
     parser.add_argument("--buffer-batches", "-b", type=int, default=1, help="Number of PPO target batches to store in the replay buffer (b in paper)")
-    parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="PPO Adam optimizer learning rate")
+    parser.add_argument("--learning-rate", "-lr", type=float, default=1e-3, help="PPO Adam optimizer learning rate")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="Toggle learning rate annealing for PPO policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="General advantage estimation lambda (not the lambda used for PROPS")
@@ -74,7 +74,7 @@ def parse_args():
     parser.add_argument("--props-num-steps", type=int, default=64, help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
     parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-4, help="PROPS Adam optimizer learning rate")
     parser.add_argument("--props-anneal-lr", type=lambda x: bool(strtobool(x)), default=0, nargs="?", const=False, help="Toggle learning rate annealing for PROPS policy")
-    parser.add_argument("--props-clip-coef", type=float, default=0.3, help="Surrogate clipping coefficient \epsilon_PROPS for PROPS")
+    parser.add_argument("--props-clip-coef", type=float, default=0.2, help="Surrogate clipping coefficient \epsilon_PROPS for PROPS")
     parser.add_argument("--props-max-grad-norm", type=float, default=0.5, help="Maximum norm for gradient clipping for PROPS update")
     parser.add_argument("--props-num-minibatches", type=int, default=8, help="Number of minibatches updates for PROPS update")
     parser.add_argument("--props-update-epochs", type=int, default=16, help="Number of epochs for PROPS update")
@@ -101,7 +101,8 @@ def parse_args():
     args.buffer_size = args.buffer_batches * args.batch_size
     args.minibatch_size = int(args.buffer_size // args.num_minibatches)
     args.props_minibatch_size = int((args.buffer_size - args.props_num_steps) // args.props_num_minibatches)
-
+    args.eval_freq = args.total_timesteps // 100
+    print(args.eval_freq)
 
 
     # cuda support. Currently does not work with normalization
@@ -119,6 +120,7 @@ def parse_args():
         algo = 'reinforce'
         args.update_epochs = 1
         args.minibatch_size = args.buffer_size
+        args.ent_coef = 0
     else:
         algo = 'ppo'
     if args.props:
@@ -167,7 +169,7 @@ def parse_args():
     with open(os.path.join(args.save_dir, "config.yml"), "w") as f:
         yaml.dump(args, f, sort_keys=True)
 
-    print(args.se)
+    print(args.learning_rate)
     return args
 
 
@@ -562,7 +564,10 @@ def main():
 
     # PPO target agent
     agent = Agent(envs).to(args.device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    if args.reinforce:
+        optimizer = optim.SGD(agent.parameters(), lr=args.learning_rate)
+    else:
+        optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     # load pretrained policy and normalization information
     if args.policy_path:
         agent = torch.load(args.policy_path).to(args.device)
@@ -576,7 +581,8 @@ def main():
 
     # ROS behavior agent
     agent_props = copy.deepcopy(agent).to(args.device)  # initialize props policy to be equal to the eval policy
-    props_optimizer = optim.Adam(agent_props.parameters(), lr=args.props_learning_rate, eps=1e-5)
+    props_optimizer = optim.SGD(agent_props.parameters(), lr=args.props_learning_rate)
+
 
     # Evaluation modules
     eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir,
@@ -640,13 +646,49 @@ def main():
                 actions_buffer[buffer_pos] = action
 
             next_obs, reward, terminated, truncated, infos = envs.step(action.cpu().numpy())
-            done = np.logical_or(terminated, truncated)
+            # done = np.logical_or(terminated, truncated)
             reward = env_reward_normalize.unnormalize(reward)
             rewards_buffer[buffer_pos] = torch.tensor(reward).to(args.device).view(-1)
-            next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(done).to(args.device)
+            next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(terminated).to(args.device)
 
             buffer_pos += 1
             buffer_pos %= args.buffer_size
+
+
+            # Evaluate agent performance
+            if (global_step+1) % (args.eval_freq) == 0:
+                current_time = time.time() - start_time
+                print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
+                agent = agent.to(args.device)
+                agent_props = agent_props.to(args.device)
+                # Evaluate PPO policy
+                target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
+                if args.props_eval:
+                    # Evaluate PROPS policy
+                    props_ret, props_std = eval_module_props.evaluate(global_step, train_env=envs, noise=False)
+
+                # save stats
+                if args.log_stats:
+                    for key, val in ppo_stats.items():
+                        ppo_logs[key].append(ppo_stats[key])
+                    for key, val in props_stats.items():
+                        props_logs[key].append(props_stats[key])
+                times.append(current_time)
+
+                np.savez(
+                    eval_module.log_path,
+                    times=times,
+                    timesteps=eval_module.evaluations_timesteps,
+                    returns=eval_module.evaluations_returns,
+                    successes=eval_module.evaluations_successes,
+                    **ppo_logs,
+                    **props_logs,
+                )
+
+                if args.track:
+                    writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
+                    if args.props_eval:
+                        writer.add_scalar("charts/props_eval_return", props_ret, global_step)
 
             # Only print when at least 1 env is done
             if "final_info" not in infos:
@@ -659,6 +701,7 @@ def main():
                 if args.track:
                     writer.add_scalar("charts/props_train_ret", info["episode"]["r"], global_step)
                     writer.add_scalar("charts/episode_length", info["episode"]["l"], global_step)
+
 
         # Reorder the replay buffer from youngest to oldest so we can reuse cleanRL's code to compute advantages
         if global_step < args.buffer_size:
@@ -762,41 +805,6 @@ def main():
             # perform props behavior update and log stats
             props_stats = update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, advantages, global_step, args,
                                        writer, means, stds)
-
-        # Evaluate agent performance
-        if global_step % (args.num_steps * args.eval_freq) == 0:
-            current_time = time.time() - start_time
-            print(f"Training time: {int(current_time)} \tsteps per sec: {int(global_step / current_time)}")
-            agent = agent.to(args.device)
-            agent_props = agent_props.to(args.device)
-            # Evaluate PPO policy
-            target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
-            if args.props_eval:
-                # Evaluate PROPS policy
-                props_ret, props_std = eval_module_props.evaluate(global_step, train_env=envs, noise=False)
-
-            # save stats
-            if args.log_stats:
-                for key, val in ppo_stats.items():
-                    ppo_logs[key].append(ppo_stats[key])
-                for key, val in props_stats.items():
-                    props_logs[key].append(props_stats[key])
-            times.append(current_time)
-
-            np.savez(
-                eval_module.log_path,
-                times=times,
-                timesteps=eval_module.evaluations_timesteps,
-                returns=eval_module.evaluations_returns,
-                successes=eval_module.evaluations_successes,
-                **ppo_logs,
-                **props_logs,
-            )
-
-            if args.track:
-                writer.add_scalar("charts/ppo_eval_return", target_ret, global_step)
-                if args.props_eval:
-                    writer.add_scalar("charts/props_eval_return", props_ret, global_step)
 
     current_time = time.time() - start_time
     print(f'Time: {current_time}')
