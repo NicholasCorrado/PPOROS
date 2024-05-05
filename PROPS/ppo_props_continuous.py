@@ -79,7 +79,7 @@ def parse_args():
     parser.add_argument("--props-max-grad-norm", type=float, default=0.5, help="Maximum norm for gradient clipping for PROPS update")
     parser.add_argument("--props-num-minibatches", type=int, default=4, help="Number of minibatches updates for PROPS update")
     parser.add_argument("--props-update-epochs", type=int, default=16, help="Number of epochs for PROPS update")
-    parser.add_argument("--props-target-kl", type=float, default=0.1, help="Target/cutoff KL divergence threshold for PROPS update")
+    parser.add_argument("--props-target-kl", type=float, default=0.01, help="Target/cutoff KL divergence threshold for PROPS update")
     parser.add_argument("--props-lambda", type=float, default=0.1, help="Regularization coefficient for PROPS update")
     parser.add_argument("--props-adv", type=int, default=False, help="If True, the PROPS update is weighted using the absolute advantage |A(s,a)|")
     parser.add_argument("--props-eval", type=int, default=False, help="If set, the PROPS policy is evaluated every props_eval ")
@@ -204,7 +204,8 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             mb_inds = b_inds[start:end]
             _, _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
 
-            logratio = newlogprob - b_logprobs[mb_inds]
+            mb_logprobs = b_logprobs[mb_inds]
+            logratio = newlogprob - mb_logprobs
             ratio = logratio.exp()
 
             with torch.no_grad():
@@ -227,7 +228,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
             # Policy loss
             if args.actor_critic:
-                pg_loss = (-mb_advantages * logprobs).mean()
+                pg_loss = (-mb_advantages * mb_logprobs).mean()
             else:
                 pg_loss1 = -mb_advantages * ratio
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
@@ -709,21 +710,33 @@ def main():
                 agent_buffer.append(copy.deepcopy(agent))
 
             # Compute advantages and returns. If props_adv = True, then we must recompute advantages before every PROPS update, not just every target update.
-            with torch.no_grad():
-                next_value = agent.get_value(next_obs).reshape(1, -1)
-                advantages = torch.zeros_like(rewards).to(args.device)
-                lastgaelam = 0
-                num_steps = indices.shape[0]
-                for t in reversed(range(num_steps)):
-                    if t == num_steps - 1:
-                        nextnonterminal = 1.0 - next_done
-                        nextvalues = next_value
-                    else:
-                        nextnonterminal = 1.0 - dones[t + 1]
-                        nextvalues = values[t + 1]
-                    delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                    advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-                returns = advantages + values
+            if args.reinforce:
+                pass
+                # with torch.no_grad():
+                #     next_value = agent.get_value(next_obs).reshape(1, -1)
+                #     advantages = torch.zeros_like(rewards).to(args.device)
+                #     lastgaelam = 0
+                #     num_steps = indices.shape[0]
+                #     for t in range(num_steps):
+                #
+                #         advantages[t] = return_to_go[t] - values[t]
+                #     returns = advantages + values
+            else:
+                with torch.no_grad():
+                    next_value = agent.get_value(next_obs).reshape(1, -1)
+                    advantages = torch.zeros_like(rewards).to(args.device)
+                    lastgaelam = 0
+                    num_steps = indices.shape[0]
+                    for t in reversed(range(num_steps)):
+                        if t == num_steps - 1:
+                            nextnonterminal = 1.0 - next_done
+                            nextvalues = next_value
+                        else:
+                            nextnonterminal = 1.0 - dones[t + 1]
+                            nextvalues = values[t + 1]
+                        delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                        advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                    returns = advantages + values
 
             # Compute sampling error *before* updating the target policy.
             if do_se:
