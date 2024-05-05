@@ -66,17 +66,18 @@ def parse_args():
     parser.add_argument("--vf-coef", type=float, default=0.5, help="Value loss coefficient for PPO update")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="Maximum norm for gradient clipping for PPO update")
     parser.add_argument("--target-kl", type=float, default=0.03, help="Target/cutoff KL divergence threshold for PPO update")
+    parser.add_argument("--actor-critic", type=int, default=0, help="")
+    parser.add_argument("--reinforce", type=int, default=0, help="")
 
     # PROPS/ROS hyperparameters
     parser.add_argument("--props", type=int, default=0, help="If True, use PROPS to collect data, otherwise use on-policy sampling")
-    parser.add_argument("--reinforce", type=int, default=0, help="If True, use ROS to collect data, otherwise use on-policy sampling")
     parser.add_argument("--ros", type=int, default=0, help="If True, use ROS to collect data, otherwise use on-policy sampling")
     parser.add_argument("--props-num-steps", type=int, default=64, help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
     parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-4, help="PROPS Adam optimizer learning rate")
     parser.add_argument("--props-anneal-lr", type=lambda x: bool(strtobool(x)), default=0, nargs="?", const=False, help="Toggle learning rate annealing for PROPS policy")
     parser.add_argument("--props-clip-coef", type=float, default=0.2, help="Surrogate clipping coefficient \epsilon_PROPS for PROPS")
     parser.add_argument("--props-max-grad-norm", type=float, default=0.5, help="Maximum norm for gradient clipping for PROPS update")
-    parser.add_argument("--props-num-minibatches", type=int, default=8, help="Number of minibatches updates for PROPS update")
+    parser.add_argument("--props-num-minibatches", type=int, default=4, help="Number of minibatches updates for PROPS update")
     parser.add_argument("--props-update-epochs", type=int, default=16, help="Number of epochs for PROPS update")
     parser.add_argument("--props-target-kl", type=float, default=0.1, help="Target/cutoff KL divergence threshold for PROPS update")
     parser.add_argument("--props-lambda", type=float, default=0.1, help="Regularization coefficient for PROPS update")
@@ -116,8 +117,8 @@ def parse_args():
 
     # set save_dir
     assert not (args.props == 1 and args.ros == 1)
-    if args.reinforce:
-        algo = 'reinforce'
+    if args.actor_critic:
+        algo = 'actor_critic'
         args.update_epochs = 1
         args.minibatch_size = args.buffer_size
         args.ent_coef = 0
@@ -160,9 +161,6 @@ def parse_args():
     else:
         run_id = get_latest_run_id(save_dir=args.save_dir) + 1
         args.save_dir += f"/run_{run_id}"
-
-
-
 
     # dump training config to save dir
     os.makedirs(args.save_dir, exist_ok=True)
@@ -224,8 +222,8 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
             # Policy loss
-            if args.reinforce:
-                pg_loss = (-mb_advantages * ratio).mean()
+            if args.actor_critic:
+                pg_loss = (-mb_advantages * logprobs).mean()
             else:
                 pg_loss1 = -mb_advantages * ratio
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
@@ -564,10 +562,8 @@ def main():
 
     # PPO target agent
     agent = Agent(envs).to(args.device)
-    if args.reinforce:
-        optimizer = optim.SGD(agent.parameters(), lr=args.learning_rate)
-    else:
-        optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+
     # load pretrained policy and normalization information
     if args.policy_path:
         agent = torch.load(args.policy_path).to(args.device)
@@ -581,7 +577,7 @@ def main():
 
     # ROS behavior agent
     agent_props = copy.deepcopy(agent).to(args.device)  # initialize props policy to be equal to the eval policy
-    props_optimizer = optim.SGD(agent_props.parameters(), lr=args.props_learning_rate)
+    props_optimizer = optim.Adam(agent_props.parameters(), lr=args.props_learning_rate)
 
 
     # Evaluation modules
@@ -627,6 +623,7 @@ def main():
 
     ppo_stats = {}
     props_stats = {}
+
 
     for props_update in range(1, num_props_updates + 1):
         for step in range(0, args.props_num_steps):
