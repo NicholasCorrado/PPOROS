@@ -228,7 +228,7 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
 
             # Policy loss
             if args.actor_critic:
-                pg_loss = (-mb_advantages * mb_logprobs).mean()
+                pg_loss = (-mb_advantages * newlogprob).mean()
             else:
                 pg_loss1 = -mb_advantages * ratio
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
