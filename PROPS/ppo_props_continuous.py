@@ -44,7 +44,7 @@ def parse_args():
     # General training parameters (both PROPS and PPO)
     parser.add_argument("--env-id", type=str, default="Hopper-v4", help="Environment id")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
-    parser.add_argument("--total-timesteps", type=int, default=1000000, help="Number of timesteps to train")
+    parser.add_argument("--total-timesteps", type=int, default=100000, help="Number of timesteps to train")
     parser.add_argument("--seed", type=int, default=0, help="Seed of the experiment")
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="If toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="If toggled, cuda will be enabled by default")
@@ -70,9 +70,9 @@ def parse_args():
     parser.add_argument("--reinforce", type=int, default=0, help="")
 
     # PROPS/ROS hyperparameters
-    parser.add_argument("--props", type=int, default=0, help="If True, use PROPS to collect data, otherwise use on-policy sampling")
+    parser.add_argument("--props", type=int, default=1, help="If True, use PROPS to collect data, otherwise use on-policy sampling")
     parser.add_argument("--ros", type=int, default=0, help="If True, use ROS to collect data, otherwise use on-policy sampling")
-    parser.add_argument("--props-num-steps", type=int, default=64, help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
+    parser.add_argument("--props-num-steps", type=int, default=1024, help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
     parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-4, help="PROPS Adam optimizer learning rate")
     parser.add_argument("--props-anneal-lr", type=lambda x: bool(strtobool(x)), default=0, nargs="?", const=False, help="Toggle learning rate annealing for PROPS policy")
     parser.add_argument("--props-clip-coef", type=float, default=0.1, help="Surrogate clipping coefficient \epsilon_PROPS for PROPS")
@@ -85,8 +85,8 @@ def parse_args():
     parser.add_argument("--props-eval", type=int, default=False, help="If set, the PROPS policy is evaluated every props_eval ")
 
     # Sampling error (se)
-    parser.add_argument("--se", type=int, default=0, help="If True, sampling error is computed every se_freq PPO updates.")
-    parser.add_argument("--se-ref", type=int, default=0, help="If True, on-policy sampling error is computed using the PPO policy sequence obtained while using PROPS. Only applies if se is True.")
+    parser.add_argument("--se", type=int, default=1, help="If True, sampling error is computed every se_freq PPO updates.")
+    parser.add_argument("--se-ref", type=int, default=1, help="If True, on-policy sampling error is computed using the PPO policy sequence obtained while using PROPS. Only applies if se is True.")
     parser.add_argument("--se-lr", type=float, default=1e-3, help="Adam optimizer learning rate used to compute the empirical (maximum likelihood) policy in sampling error computation.")
     parser.add_argument("--se-epochs", type=int, default=250, help="Number of epochs to compute empirical (maximum likelihood) policy.")
     parser.add_argument("--se-freq", type=int, default=None, help="Compute sampling error very se_freq PPO updates")
@@ -427,24 +427,22 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
     return props_stats
 
 
-def compute_se(args, agent, agent_props, obs, actions, advantages, sampling_error_logs, global_step, envs, prefix=""):
+def compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, global_step, envs, prefix=""):
     # COMPUTE SAMPLING ERROR
 
     # Initialize empirical policy equal to the current PPO policy.
     agent_mle = copy.deepcopy(agent)
 
     # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
-    # params = [p for p in agent_mle.actor_mean.parameters()]
-    # params[0].requires_grad = False
-    # params[2].requires_grad = False
+    params = [p for p in agent_mle.actor_mean.parameters()]
+    params[0].requires_grad = False
+    params[2].requires_grad = False
 
     optimizer_mle = optim.Adam(agent_mle.parameters(), lr=args.se_lr)
-
     obs_dim = obs.shape[-1]
     action_dim = actions.shape[-1]
     b_obs = obs.reshape(-1, obs_dim).to(args.device)
     b_actions = actions.reshape(-1, action_dim).to(args.device)
-    b_advantages = advantages.reshape(-1).to(args.device)
 
     n = len(b_obs)
     b_inds = np.arange(n)
@@ -453,6 +451,7 @@ def compute_se(args, agent, agent_props, obs, actions, advantages, sampling_erro
     for epoch in range(args.se_epochs):
 
         np.random.shuffle(b_inds)
+        grad_sum = 0
         for start in range(0, n, mb_size):
             end = start + mb_size
             mb_inds = b_inds[start:end]
@@ -462,8 +461,14 @@ def compute_se(args, agent, agent_props, obs, actions, advantages, sampling_erro
 
             optimizer_mle.zero_grad()
             loss.backward()
-            grad_norm = nn.utils.clip_grad_norm_(agent_mle.parameters(), 1, norm_type=2)
+            grad_sum += nn.utils.clip_grad_norm_(agent_mle.parameters(), 1, norm_type=2)
             optimizer_mle.step()
+        # if (epoch+1) % 1000 == 0:
+        #     # print(epoch, loss, torch.mean(grad_sum))
+        #     _, mean_mle, std_mle, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
+        #     _, mean_target, std_target, logprobs_target, ent_target = agent.get_action_and_info(b_obs, b_actions, clamp=True)
+        #     approx_kl_mle_target = (logprobs_mle - logprobs_target).mean()
+        #     print(epoch, approx_kl_mle_target)
 
     with torch.no_grad():
         _, mean_mle, std_mle, logprobs_mle, _ = agent_mle.get_action_and_info(b_obs, b_actions, clamp=True)
@@ -518,7 +523,6 @@ def compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_log
 
     compute_se(args, agent_buffer[-1], agent_buffer[-1], obs_buffer[:buffer_pos], actions_buffer[:buffer_pos],
                sampling_error_logs, global_step, envs, prefix="ref_")
-
 
 def main():
     args = parse_args()
@@ -740,9 +744,9 @@ def main():
 
             # Compute sampling error *before* updating the target policy.
             if do_se:
-                compute_se(args, agent, agent_props, obs, actions, advantages, sampling_error_logs, global_step, envs)
+                compute_se(args, agent, agent_props, obs, actions, sampling_error_logs, global_step, envs)
                 if args.se_ref:
-                    compute_se_ref(args, agent_buffer, envs, next_obs_buffer, sampling_error_logs, global_step)
+                    compute_se_ref(args, agent_buffer, envs, obs, sampling_error_logs, global_step)
                     sampling_error_logs[f'diff_kl_mle_target'].append(
                         sampling_error_logs[f'kl_mle_target'][-1] - sampling_error_logs[f'ref_kl_mle_target'][-1])
                     print('(PROPS - On-policy) sampling error:', sampling_error_logs[f'diff_kl_mle_target'])
@@ -826,3 +830,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+"""
+python ppo_props_continuous.py  --env-id Hopper-v4 --total-timesteps 1000000 -s b_1/lr_0.0001/s_2048/ -b 1 -lr 0.0001 --num-steps 2048 --se 1 --se-lr 1e-4 --se-epochs 250 --track 0 -b 2 --props 1 --props-lambda 0.1 --props-target-kl 0.03 --se-ref 1 --se-epochs 100000 --se-lr 1e-3 --num-steps 10000 --total-timesteps 300000 --eval-episodes 0
+
+"""
