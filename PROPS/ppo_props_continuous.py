@@ -70,7 +70,7 @@ def parse_args():
     parser.add_argument("--reinforce", type=int, default=0, help="")
 
     # PROPS/ROS hyperparameters
-    parser.add_argument("--props", type=int, default=1, help="If True, use PROPS to collect data, otherwise use on-policy sampling")
+    parser.add_argument("--props", type=int, default=0, help="If True, use PROPS to collect data, otherwise use on-policy sampling")
     parser.add_argument("--ros", type=int, default=0, help="If True, use ROS to collect data, otherwise use on-policy sampling")
     parser.add_argument("--props-num-steps", type=int, default=1024, help="PROPS behavior batch size (m in paper), the number of steps to run in each environment per policy rollout")
     parser.add_argument("--props-learning-rate", "-props-lr", type=float, default=1e-4, help="PROPS Adam optimizer learning rate")
@@ -85,11 +85,12 @@ def parse_args():
     parser.add_argument("--props-eval", type=int, default=False, help="If set, the PROPS policy is evaluated every props_eval ")
 
     # Sampling error (se)
-    parser.add_argument("--se", type=int, default=1, help="If True, sampling error is computed every se_freq PPO updates.")
+    parser.add_argument("--se", type=int, default=0, help="If True, sampling error is computed every se_freq PPO updates.")
     parser.add_argument("--se-ref", type=int, default=1, help="If True, on-policy sampling error is computed using the PPO policy sequence obtained while using PROPS. Only applies if se is True.")
     parser.add_argument("--se-lr", type=float, default=1e-3, help="Adam optimizer learning rate used to compute the empirical (maximum likelihood) policy in sampling error computation.")
     parser.add_argument("--se-epochs", type=int, default=250, help="Number of epochs to compute empirical (maximum likelihood) policy.")
     parser.add_argument("--se-freq", type=int, default=None, help="Compute sampling error very se_freq PPO updates")
+    parser.add_argument("--se-debug", type=int, default=None, help="Only run PROPS when we evaluate sampling error")
 
     # loading pretrained models
     parser.add_argument("--policy-path", type=str, default=None, help="Path of pretrained policy to load")
@@ -102,7 +103,7 @@ def parse_args():
     args.buffer_size = args.buffer_batches * args.batch_size
     args.minibatch_size = int(args.buffer_size // args.num_minibatches)
     args.props_minibatch_size = int((args.buffer_size - args.props_num_steps) // args.props_num_minibatches)
-    args.eval_freq = args.total_timesteps // 100
+    args.eval_freq = args.total_timesteps // 30
 
     # cuda support. Currently does not work with normalization
     args.device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
@@ -677,6 +678,10 @@ def main():
         do_props_update = args.props and global_step % args.props_num_steps == 0
         do_se = args.se and global_step % (args.num_steps * args.se_freq) == 0
         do_eval = (global_step + 1) % args.eval_freq == 0
+
+        if args.se_debug:
+            before_do_se = (global_step - (args.buffer_batches-1)*args.num_steps) % (args.num_steps * args.se_freq) == 0
+            do_props_update = before_do_se and global_step % args.props_num_steps == 0
 
         if do_ppo_update or do_props_update:
             # Reorder the replay buffer from youngest to oldest so we can reuse cleanRL's code to compute advantages
