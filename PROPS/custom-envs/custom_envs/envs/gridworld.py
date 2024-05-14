@@ -1,116 +1,75 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 import gymnasium as gym
 import numpy as np
-from gymnasium.spaces import Discrete, Box
 
 
 class GridWorldEnv(gym.Env):
-    Left = 0
-    Right = 1
-    Down = 2
-    Up = 3
-    MaxStep = 100
-    gamma = 1
-
-    action_space = Discrete(4)
-    observation_space = Box(0, 1, (8*8,))
-
-    def __init__(self, mean_factor=1., scale_noise=0.) -> None:
+    def __init__(self, shape=(5,5)):
         super().__init__()
-        self.ready = False
-        self.time_step = 0
-        self.state = np.zeros(2)
 
-        self.terminal_state = np.array([7, 7])
-        self.trap_state = np.array([5, 5])
-        self.reward_state = np.array([1, 7])
+        self.shape = np.array(shape)
+        self.action_space = gym.spaces.Discrete(4)
+        print(self.shape)
+        self.observation_space = gym.spaces.Box(low=0, high=0, shape=(np.product(self.shape),))
+        # self.observation_space = gym.spaces.Discrete(np.product(self.shape))
 
-        self.mean_factor = mean_factor
-        self.scale_noise = scale_noise
+        self.rowcol = np.zeros(2)
+        self.goal_rowcol = self.shape-1
 
-    def step(self, action: int):
-        assert self.ready, "please reset."
-        assert action in (GridWorldEnv.Up, GridWorldEnv.Down, GridWorldEnv.Left, GridWorldEnv.Right)
-        self.time_step += 1
-        old_state: np.ndarray = self.state.copy()
+    def _rowcol_to_obs(self, rowcol, goal_rowcol):
+        # idx = np.concatenate([
+        #     rowcol[0] * self.shape[0] + rowcol[1],
+        #     goal_rowcol[0] * self.shape[0] + goal_rowcol[1],
+        # ])
 
-        i = action // 2
-        j = action % 2
-        self.state[i] += 1 if j else -1
-        self.state = self.state.clip(0, 7)
+        idx = int(rowcol[0] * self.shape[0] + rowcol[1])
+        state = np.zeros(self.observation_space.shape[-1])
+        state[idx] = 1
+        return state
+
+
+    def step(self, a):
+
+        # up
+        if a == 0:
+            self.rowcol[0] -= 1
+        # down
+        elif a == 1:
+            self.rowcol[0] += 1
+        # left
+        elif a == 2:
+            self.rowcol[1] -= 1
+        # down
+        elif a == 3:
+            self.rowcol[1] += 1
+
+        self.rowcol = np.clip(self.rowcol, a_min=np.zeros(2), a_max=self.shape-1)
 
         terminated = False
-        truncated = self.time_step == GridWorldEnv.MaxStep
+        truncated = False
 
-        if (self.state == old_state).all():
-            r = -1
+        if np.all(self.rowcol == self.goal_rowcol):
+            reward = 1
+            terminated = True
         else:
-            if (self.state == self.terminal_state).all():
-                r, terminated = 1, True
-            # elif (self.state == self.trap_state).all():
-            #     r = -10
-            # elif (self.state == self.reward_state).all():
-            #     r = 1
-            else:
-                r = -0.1
+            reward = 0
 
-        if terminated or truncated:
-            self.ready = False
+        state = self._rowcol_to_obs(self.rowcol, self.goal_rowcol)
+        info = {}
+        return state, reward, terminated, truncated, info
 
-        r *= self.mean_factor
-        if self.scale_noise:
-            r += self.scale_noise * (2 * np.random.random() - 1)  # [-scale_noise, scale_noise]
-
-        return self.to_observation(), r, terminated, truncated, {}
-
-    def to_observation(self):
-        # return self.state.copy()
-        idx = self.state[0] * 8 + self.state[1]
-        obs = np.zeros(64)
-        obs[int(idx)] = 1
-        return obs
-
-    def to_state(self, state):
-        # return state
-        return np.array([state // 8, state % 8])
-
-    def reset(self,
+    def reset(
+        self,
         *,
         seed: Optional[int] = None,
         options: Optional[dict] = None,
     ):
-        self.state = np.zeros(2)
-        self.ready = True
-        self.time_step = 0
-        return self.to_observation(), {}
+        self.rowcol = np.zeros(2)
+        self.goal_rowcol = np.array(self.shape)-1
+        state = self._rowcol_to_obs(self.rowcol, self.goal_rowcol)
 
-    def render(self, mode='human'):
-        return
-        image = np.zeros((4, 4))
-
-        image[3 - self.terminal_state[1], self.terminal_state[0]] = "T"
-        image[3 - self.trap_state[1], self.trap_state[0]] = "t"
-        image[3 - self.reward_state[1], self.reward_state[0]] = "r"
-        image[3 - self.state[1], self.state[0]] = "X"
-        print(image)
-
-    def seed(self, seed=None):
-        np.random.seed(seed)
-
-
-def play():
-    env = GridWorldEnv()
-    s, _ = env.reset()
-    done = False
-    while not done:
-        env.render()
-        a = env.action_space.sample()
-        s_, r, terminated, truncated, info = env.step(a)
-        done = terminated or truncated
-        print(env.to_state(s), a, r)
-        s = s_
-
-
-if __name__ == '__main__':
-    play()
+        return state, {}
+    #
+    # def seed(self, seed):
+    #     return

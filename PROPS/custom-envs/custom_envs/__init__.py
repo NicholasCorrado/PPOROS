@@ -62,3 +62,15 @@ for n in [10, 50, 100]:
             'n': n
         }
     )
+
+
+# from gym.envs.registration import register
+
+register(
+    id="GridWorld-5x5-v0",
+    entry_point="custom_envs.envs:GridWorldEnv",
+    max_episode_steps=20,
+    kwargs={
+        'shape': (5, 5),
+    },
+)
