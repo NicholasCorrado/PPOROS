@@ -1,6 +1,10 @@
 # Python build file
-
 universe = vanilla
+#universe = container
+#container_image = docker://nicholascorrado/props:latest
+
+#universe = docker
+#docker_container = nicholascorrado/props:latest
 
 executable = job.sh
 initial_dir = $(results_dir)
@@ -18,7 +22,7 @@ transfer_output_files = results_$(Process).tar.gz
 #+IsBuildJob = true
 # Indicate which version of Linux (CentOS) you want to build your packages on
 requirements = (Target.HasCHTCStaging == true) 
-# && (OpSysMajorVer =?= 8)
+#&& (OpSysMajorVer =?= 8)
 request_cpus = 1
 request_memory = $(mem)GB
 request_disk = $(disk)GB
