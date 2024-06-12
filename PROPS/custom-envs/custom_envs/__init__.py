@@ -72,14 +72,15 @@ register(
     },
 )
 
-register(
-    id="GridWorldCliff-5x10-v0",
-    entry_point="custom_envs.envs:GridWorldCliffEnv",
-    max_episode_steps=30,
-    kwargs={
-        'shape': (5, 10),
-    },
-)
+for l in [3, 4, 5]:
+    register(
+        id=f"GridWorldCliff-{l}x{2*l}-v0",
+        entry_point="custom_envs.envs:GridWorldCliffEnv",
+        max_episode_steps=(2*l+l)*2,
+        kwargs={
+            'shape': (l, 2*l),
+        },
+    )
 
 for l in [5, 10, 20]:
     register(
