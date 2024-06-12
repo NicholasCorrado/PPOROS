@@ -63,14 +63,31 @@ for n in [10, 50, 100]:
         }
     )
 
-
-# from gym.envs.registration import register
-
 register(
-    id="GridWorld-5x5-v0",
-    entry_point="custom_envs.envs:GridWorldEnv",
-    max_episode_steps=20,
+    id="GridWorldHard-5x5-v0",
+    entry_point="custom_envs.envs:GridWorldHardEnv",
+    max_episode_steps=8,
     kwargs={
         'shape': (5, 5),
     },
 )
+
+register(
+    id="GridWorldCliff-5x10-v0",
+    entry_point="custom_envs.envs:GridWorldCliffEnv",
+    max_episode_steps=30,
+    kwargs={
+        'shape': (5, 10),
+    },
+)
+
+for l in [5, 10, 20]:
+    register(
+        id=f"GridWorld-{l}x{l}-v0",
+        entry_point="custom_envs.envs:GridWorldEnv",
+        max_episode_steps=2*l,
+        kwargs={
+            'shape': (l, l),
+        },
+    )
+

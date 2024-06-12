@@ -15,13 +15,13 @@ import torch.nn as nn
 import torch.optim as optim
 import yaml
 
-from utils import Evaluate, AgentDiscrete, EvaluateDiscrete, ConfigLoader
-from utils import get_latest_run_id, make_env, Agent
+from PROPS.utils import Evaluate, AgentDiscrete, EvaluateDiscrete, ConfigLoader
+from PROPS.utils import get_latest_run_id, make_env, Agent
 
 def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
         env = gym.make(env_id)
-        # env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = gym.wrappers.RecordEpisodeStatistics(env)
         if capture_video:
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
@@ -49,7 +49,7 @@ def parse_args():
 
     # Saving and logging parameters
     parser.add_argument("--log-stats", type=int, default=1, help="If true, training statistics are logged")
-    parser.add_argument("--eval-freq", type=int, default=10, help="Evaluate PPO and/or PROPS policy every eval_freq PPO updates")
+    parser.add_argument("--eval-freq", type=int, default=10000, help="Evaluate PPO and/or PROPS policy every eval_freq PPO updates")
     parser.add_argument("--eval-episodes", type=int, default=20, help="Number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
@@ -80,8 +80,10 @@ def parse_args():
     parser.add_argument("--vf-coef", type=float, default=0.5, help="Value loss coefficient for PPO update")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="Maximum norm for gradient clipping for PPO update")
     parser.add_argument("--target-kl", type=float, default=0.03, help="Target/cutoff KL divergence threshold for PPO update")
+    parser.add_argument("--linear", type=int, default=0, help="")
     parser.add_argument("--actor-critic", type=int, default=0, help="")
     parser.add_argument("--reinforce", type=int, default=0, help="")
+    parser.add_argument("--oracle-adaptive", type=int, default=0, help="")
 
     # PROPS/ROS hyperparameters
     parser.add_argument("--props", type=int, default=0, help="If True, use PROPS to collect data, otherwise use on-policy sampling")
@@ -117,7 +119,7 @@ def parse_args():
     args.buffer_size = args.buffer_batches * args.batch_size
     args.minibatch_size = int(args.buffer_size // args.num_minibatches)
     args.props_minibatch_size = int((args.buffer_size - args.props_num_steps) // args.props_num_minibatches)
-    args.eval_freq = args.total_timesteps // 30
+    # args.eval_freq = args.num_steps
 
     # cuda support. Currently does not work with normalization
     args.device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
@@ -148,6 +150,11 @@ def parse_args():
         sampling = 'props'
     elif args.ros:
         sampling = 'ros'
+        args.minibatch_size = args.buffer_size
+        args.props_update_epochs = 1
+        args.props_clip_coef = 9999999
+        args.props_target_kl = 9999999
+        args.props_lambda = 0
     else:
         sampling = 'on_policy'
         args.props_num_steps = args.num_steps # to force num_props_updates = num_updates
@@ -328,7 +335,7 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
     else:
         # If the replay buffer is full, exclude the oldest behavior batch from this update; that batch will be evicted
         # before the next update and thus does not contribute to sampling error.
-        start = args.props_num_steps
+        start =  0 #args.props_num_steps
         end = args.buffer_size
 
     # flatten the replay buffer data
@@ -343,6 +350,7 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
 
     batch_size = b_obs.shape[0]
     minibatch_size = min(args.props_minibatch_size, batch_size)
+    # print(args.props_minibatch_size, batch_size)
     b_inds = np.arange(batch_size)
     clipfracs = []
 
@@ -580,10 +588,10 @@ def main():
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only continuous action space is supported"
     # env_reward_normalize = envs.envs[0].env
     # env_obs_normalize = envs.envs[0].env.env.env
-    env_obs_normalize = envs.envs[0].env
+    # env_obs_normalize = envs.envs[0].env
 
     # PPO target agent
-    agent = AgentDiscrete(envs).to(args.device)
+    agent = AgentDiscrete(envs, linear=args.linear).to(args.device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     # load pretrained policy and normalization information
     if args.policy_path:
@@ -631,11 +639,13 @@ def main():
     props_logs = defaultdict(lambda: [])
     sampling_error_logs = defaultdict(lambda: [])
     times = []
+    updates = [0]
 
     start_time = time.time()
     global_step = 0
     target_update = 0
     props_update = 0
+    num_episodes = 0
 
     # evaluate initial policy
     eval_module.evaluate(global_step, train_env=envs, noise=False)
@@ -645,6 +655,10 @@ def main():
     ppo_stats = {}
     props_stats = {}
 
+    all_se = []
+    all_pi = []
+    all_sa_counts = []
+    sa_counts = np.zeros(shape=(envs.single_observation_space.shape[-1], envs.single_action_space.n))
 
     for global_step in range(args.total_timesteps):
         # collect a transition
@@ -654,11 +668,18 @@ def main():
         dones_buffer[buffer_pos] = next_done
 
         with torch.no_grad():
+            if args.oracle_adaptive:
+                action, action_probs, logprob_props, entropy, _ = agent_props.get_action_and_value(next_obs)
+
+
             if args.props:
                 action, action_probs, logprob_props, entropy, _ = agent_props.get_action_and_value(next_obs)
             else:
                 action, action_probs, _, _, _ = agent.get_action_and_value(next_obs)
             actions_buffer[buffer_pos] = action
+
+        s_idx = np.where(next_obs == 1)
+        sa_counts[s_idx, action] += 1
 
         next_obs, reward, terminated, truncated, infos = envs.step(action.cpu().numpy())
         rewards_buffer[buffer_pos] = torch.tensor(reward).to(args.device).view(-1)
@@ -676,12 +697,17 @@ def main():
                 writer.add_scalar("charts/props_train_ret", info["episode"]["r"], global_step)
                 writer.add_scalar("charts/episode_length", info["episode"]["l"], global_step)
 
+
         # determine what all needs to be done at this timestep
         if args.reinforce:
             do_ppo_update = next_done
+            if do_ppo_update:
+                buffer_pos = 0
+
         else:
             do_ppo_update = global_step % args.num_steps == 0
-        do_props_update = args.props and global_step % args.props_num_steps == 0
+        # do_props_update = args.props and global_step % args.props_num_steps == 0
+        do_props_update = args.props and (terminated or truncated)
         do_se = args.se and global_step % (args.num_steps * args.se_freq) == 0
         do_eval = (global_step + 1) % args.eval_freq == 0
 
@@ -691,7 +717,7 @@ def main():
 
         if do_ppo_update or do_props_update:
             # Reorder the replay buffer from youngest to oldest so we can reuse cleanRL's code to compute advantages
-            if global_step < args.buffer_size:
+            if global_step < args.buffer_size or args.reinforce:
                 indices = np.arange(buffer_pos)
             else:
                 indices = (np.arange(args.buffer_size) + buffer_pos) % args.buffer_size
@@ -716,13 +742,16 @@ def main():
             if args.reinforce:
                 pass
                 # with torch.no_grad():
-                #     next_value = agent.get_value(next_obs).reshape(1, -1)
+                #     # with reinforce, advantages = return to go
                 #     advantages = torch.zeros_like(rewards).to(args.device)
-                #     lastgaelam = 0
                 #     num_steps = indices.shape[0]
-                #     for t in range(num_steps):
-                #
-                #         advantages[t] = return_to_go[t] - values[t]
+                #     advantages[:, -1] = rewards[:, -1]
+                #     for t in reversed(range(num_steps)):
+                #         if t == num_steps - 1:
+                #             nextnonterminal = 1.0 - next_done
+                #             nextvalues = next_value
+                #         else:
+                #             advantages[t] = advantages[t] - values[t]
                 #     returns = advantages + values
             else:
                 with torch.no_grad():
@@ -770,7 +799,6 @@ def main():
 
                 ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
 
-
             if do_props_update:
                 props_update += 1
                 # Annealing learning rate
@@ -792,10 +820,27 @@ def main():
             agent = agent.to(args.device)
             agent_props = agent_props.to(args.device)
             # Evaluate PPO policy
-            target_ret, target_std = eval_module.evaluate(global_step, train_env=envs, noise=False)
+            target_ret, target_std, sa_eval = eval_module.evaluate(global_step, train_env=envs, noise=False)
             if args.props_eval:
                 # Evaluate PROPS policy
                 props_ret, props_std = eval_module_props.evaluate(global_step, train_env=envs, noise=False)
+
+            # pi = agent.get_pi()
+            # ns = sa_counts.sum(axis=-1, keepdims=True)
+            # pi_empirical = sa_counts/ns
+            # se = np.abs(pi - pi_empirical)
+            # se = np.nan_to_num(se).sum()
+            # all_sa_counts.append(sa_counts)
+            # all_pi.append(pi)
+            # all_se.append(se)
+            # sa_counts[:, :] = 0
+
+            # ns = sa_counts.sum()
+            # ns_eval = sa_eval.sum()
+            # print(sa_counts/ns - sa_eval/ns_eval)
+            # se = np.abs(sa_counts/ns - sa_eval/ns_eval).sum()
+            # all_se.append(se)
+            # sa_counts[:, :] = 0
 
             # save stats
             if args.log_stats:
@@ -804,13 +849,18 @@ def main():
                 for key, val in props_stats.items():
                     props_logs[key].append(props_stats[key])
             times.append(current_time)
+            updates.append(target_update)
 
             np.savez(
                 eval_module.log_path,
                 times=times,
+                updates=updates,
                 timesteps=eval_module.evaluations_timesteps,
                 returns=eval_module.evaluations_returns,
                 successes=eval_module.evaluations_successes,
+                sa_counts=all_sa_counts,
+                # pi=all_pi,
+                se=all_se,
                 **ppo_logs,
                 **props_logs,
             )

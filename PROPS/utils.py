@@ -262,7 +262,7 @@ class Agent(nn.Module):
         return action
 
 class AgentDiscrete(nn.Module):
-    def __init__(self, envs, relu=False):
+    def __init__(self, envs, relu=False, linear=False):
 
         if relu:
             activation_fn = nn.ReLU
@@ -274,6 +274,8 @@ class AgentDiscrete(nn.Module):
             input_dim = np.array(envs.single_observation_space.shape).prod()
         else:
             input_dim = np.array(envs.single_observation_space.n)
+
+        self.obs_dim = input_dim
 
         self.critic = nn.Sequential(
             layer_init(nn.Linear(input_dim, 64)),
@@ -289,6 +291,23 @@ class AgentDiscrete(nn.Module):
             activation_fn(),
             layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
         )
+
+
+        if linear:
+            self.critic = nn.Sequential(
+                layer_init(nn.Linear(input_dim, 1), std=1.0),
+                # activation_fn(),
+                # layer_init(nn.Linear(64, 64)),
+                # activation_fn(),
+                # layer_init(nn.Linear(64, 1), std=1.0),
+            )
+            self.actor = nn.Sequential(
+                layer_init(nn.Linear(input_dim, envs.single_action_space.n), std=1),
+                # activation_fn(),
+                # layer_init(nn.Linear(64, 64)),
+                # activation_fn(),
+                # layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
+            )
 
     def get_value(self, x):
         return self.critic(x)
@@ -323,6 +342,19 @@ class AgentDiscrete(nn.Module):
         probs = Categorical(logits=logits)
         action = probs.sample()
         return action
+
+    def get_pi(self):
+        pi = []
+        with torch.no_grad():
+            x = torch.zeros(self.obs_dim)
+            for i in range(self.obs_dim):
+                x[:] = 0
+                x[i] = 1
+                logits = self.actor(x)
+                probs = Categorical(logits=logits).probs.detach().numpy()
+                pi.append(probs)
+        return np.array(pi)
+
 
 class Evaluate:
     """
@@ -540,7 +572,7 @@ class EvaluateDiscrete:
         # if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
 
         self.eval_env = copy.deepcopy(train_env)
-        returns, successes = self._evaluate(noise=noise)
+        returns, successes, sa_counts = self._evaluate(noise=noise)
 
         if self.log_path is not None:
             self.evaluations_timesteps.append(t)
@@ -568,14 +600,15 @@ class EvaluateDiscrete:
                     torch.save(self.model, os.path.join(self.best_model_save_path, "best_model.zip"))
                 self.best_mean_reward = mean_reward
 
-        return mean_reward, std_reward
+        return mean_reward, std_reward, sa_counts
 
     def _evaluate(self, noise):
         eval_returns = []
         eval_successes = []
+        sa_counts = np.zeros(shape=(self.eval_env.observation_space.shape[-1], self.eval_env.single_action_space.n))
 
-        obs, _ = self.eval_env.reset()
         for episode_i in range(self.n_eval_episodes):
+            obs, _ = self.eval_env.reset()
             ep_returns = []
             ep_successes = []
             done = False
@@ -587,6 +620,9 @@ class EvaluateDiscrete:
                     actions = self.model.get_action(torch.Tensor(obs).to(self.device), noise=noise)
                     # actions = self.model(torch.Tensor(obs).to(self.device))
                     actions = actions.cpu().numpy()
+
+                # s_idx = np.where(obs == 1)[1]
+                # sa_counts[s_idx, actions] += 1
 
                 # TRY NOT TO MODIFY: execute the game and log data.
                 next_obs, rewards, terminateds, truncateds, infos = self.eval_env.step(actions)
@@ -601,4 +637,4 @@ class EvaluateDiscrete:
             eval_returns.append(np.sum(ep_returns))
             eval_successes.append(np.sum(ep_successes) * 100)
 
-        return eval_returns, eval_successes
+        return eval_returns, eval_successes, sa_counts
