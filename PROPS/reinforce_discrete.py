@@ -49,6 +49,7 @@ def parse_args():
 
     # Saving and logging parameters
     parser.add_argument("--log-stats", type=int, default=1, help="If true, training statistics are logged")
+    parser.add_argument("--eval", type=int, default=1, help="Whether or not to evaluate target policy")
     parser.add_argument("--eval-freq", type=int, default=10000, help="Evaluate PPO and/or PROPS policy every eval_freq PPO updates")
     parser.add_argument("--eval-episodes", type=int, default=100, help="Number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
@@ -524,7 +525,8 @@ def main():
             agent = agent.to(args.device)
             agent_props = agent_props.to(args.device)
             # # Evaluate PPO policy
-            target_ret, target_std, sa_eval = eval_module.evaluate(global_step, train_env=envs, noise=False)
+            if args.eval:
+                target_ret, target_std, sa_eval = eval_module.evaluate(global_step, train_env=envs, noise=False)
 
             # if buffer_pos == 0:
             #     obs = obs_buffer
@@ -553,12 +555,9 @@ def main():
             # all_grad_accuracy.append(grad_accuracy.item())
             # # print(all_grad_accuracy)
 
-            ns = sa_counts.sum()
-            # print(sa_counts, sa_counts.sum())
-            # print(sa_counts/ns - sa_eval/ns_eval)
-            se = np.abs(sa_counts/ns - sa_true).sum()
-            all_se.append(se)
-            # print(all_se)
+            # ns = sa_counts.sum()
+            # se = np.abs(sa_counts/ns - sa_true).sum()
+            # all_se.append(se)
 
             # save stats
             if args.log_stats:
