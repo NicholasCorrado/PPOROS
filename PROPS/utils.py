@@ -302,7 +302,7 @@ class AgentDiscrete(nn.Module):
                 # layer_init(nn.Linear(64, 1), std=1.0),
             )
             self.actor = nn.Sequential(
-                layer_init(nn.Linear(input_dim, envs.single_action_space.n), std=1),
+                layer_init(nn.Linear(input_dim, envs.single_action_space.n, bias=False), std=0.01),
                 # activation_fn(),
                 # layer_init(nn.Linear(64, 64)),
                 # activation_fn(),
@@ -354,6 +354,12 @@ class AgentDiscrete(nn.Module):
                 probs = Categorical(logits=logits).probs.detach().numpy()
                 pi.append(probs)
         return np.array(pi)
+
+    def get_pi_s(self, x):
+        with torch.no_grad():
+            logits = self.actor(x)
+            probs = Categorical(logits=logits).probs.detach().numpy()
+        return probs
 
 
 class Evaluate:
@@ -638,3 +644,53 @@ class EvaluateDiscrete:
             eval_successes.append(np.sum(ep_successes) * 100)
 
         return eval_returns, eval_successes, sa_counts
+
+    def simulate(self, train_env):
+        self.eval_env = copy.deepcopy(train_env)
+
+        eval_returns = []
+        eval_successes = []
+        sa_counts = np.zeros(shape=(self.eval_env.observation_space.shape[-1], self.eval_env.single_action_space.n))
+        eval_obs = []
+        eval_actions = []
+        eval_rewards = []
+
+        for episode_i in range(self.n_eval_episodes):
+            obs, _ = self.eval_env.reset()
+            ep_returns = []
+            ep_successes = []
+            done = False
+            step = 0
+            # discounted_return = 0
+
+            while not done:
+                step += 1
+                # ALGO LOGIC: put action logic here
+                with torch.no_grad():
+                    actions = self.model.get_action(torch.Tensor(obs).to(self.device), noise=False)
+                    # actions = self.model(torch.Tensor(obs).to(self.device))
+                    actions = actions.cpu().numpy()
+
+                s_idx = np.where(obs == 1)[1]
+                sa_counts[s_idx, actions] += 1
+
+                # TRY NOT TO MODIFY: execute the game and log data.
+                next_obs, rewards, terminateds, truncateds, infos = self.eval_env.step(actions)
+                done = terminateds[0] or truncateds[0]
+
+                eval_obs.append(obs)
+                eval_actions.append(actions)
+                eval_rewards.append(rewards)
+                # discounted_return += rewards
+
+                # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
+                obs = next_obs
+
+                ep_returns.append(rewards[0])
+                ep_successes.append(terminateds[0])
+
+            # eval_returns.append(discounted_return)
+            eval_returns.append(np.sum(ep_returns))
+            eval_successes.append(np.sum(ep_successes) * 100)
+
+        return np.array(eval_returns), np.array(eval_obs), np.array(eval_actions), np.array(eval_rewards), sa_counts
