@@ -36,7 +36,7 @@ def parse_args():
     # Saving and logging parameters
     parser.add_argument("--log-stats", type=int, default=1, help="If true, training statistics are logged")
     parser.add_argument("--eval-freq", type=int, default=10, help="Evaluate PPO and/or PROPS policy every eval_freq PPO updates")
-    parser.add_argument("--eval-episodes", type=int, default=20, help="Number of episodes over which policies are evaluated")
+    parser.add_argument("--eval-episodes", type=int, default=50, help="Number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
     parser.add_argument("--run-id", type=int, default=None, help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
@@ -151,13 +151,15 @@ def parse_args():
                 # # otherwise we use the same run_id and seed for every experiment
                 args_loaded.seed = args.seed
                 args_loaded.run_id = args.run_id
-                args_loaded.save_dir = f"{args_loaded.results_dir}/{args_loaded.env_id}/{args_loaded.algo}/{args_loaded.results_subdir}"
+                # user can change root and subdirs
+                args_loaded.save_dir = f"{args.results_dir}/{args_loaded.env_id}/{args_loaded.algo}/{args.results_subdir}"
 
-                # if args_loaded.run_id is not None:
-                #     args_loaded.save_dir += f"/run_{args.run_id}"
-                # else:
-                #     run_id = get_latest_run_id(save_dir=save_dir) + 1
-                #     args_loaded.save_dir += f"/run_{run_id}"
+                # # user can change batch size and props parameters (@todo still need to add some props params)
+                args_loaded.batch_size = int(args.num_envs * args_loaded.num_steps)
+                args_loaded.buffer_size = args.buffer_batches * args_loaded.batch_size
+                args_loaded.minibatch_size = int(args_loaded.buffer_size // args_loaded.num_minibatches)
+                args_loaded.props_minibatch_size = int((args.buffer_size - args.props_num_steps) // args.props_num_minibatches)
+                args_loaded.eval_freq = args_loaded.total_timesteps // 30
 
                 args = args_loaded
             except yaml.YAMLError as exc:

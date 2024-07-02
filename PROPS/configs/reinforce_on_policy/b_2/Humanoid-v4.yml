@@ -41,7 +41,7 @@ props_target_kl: 0.05
 props_update_epochs: 16
 reinforce: 1
 results_dir: results
-results_subdir: b_2/s_1024/lr_0.001/
+results_subdir: b_2
 ros: 0
 run_id: 0
 save_dir: results/Humanoid-v4/reinforce_on_policy/b_2/s_1024/lr_0.001//run_0
