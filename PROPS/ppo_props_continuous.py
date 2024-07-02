@@ -44,14 +44,14 @@ def parse_args():
     # General training parameters (both PROPS and PPO)
     parser.add_argument("--env-id", type=str, default="Hopper-v4", help="Environment id")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
-    parser.add_argument("--total-timesteps", type=int, default=100000, help="Number of timesteps to train")
+    parser.add_argument("--total-timesteps", type=int, default=1000000, help="Number of timesteps to train")
     parser.add_argument("--seed", type=int, default=0, help="Seed of the experiment")
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="If toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="If toggled, cuda will be enabled by default")
     parser.add_argument("--config", type=str, default=None, help="Path to config file")
 
     # PPO hyperparameters
-    parser.add_argument("--num-steps", type=int, default=2048, help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
+    parser.add_argument("--num-steps", type=int, default=8192, help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
     parser.add_argument("--buffer-batches", "-b", type=int, default=1, help="Number of PPO target batches to store in the replay buffer (b in paper)")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-3, help="PPO Adam optimizer learning rate")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggle learning rate annealing for PPO policy and value networks")
@@ -93,8 +93,10 @@ def parse_args():
     parser.add_argument("--se-debug", type=int, default=None, help="Only run PROPS when we evaluate sampling error")
 
     # loading pretrained models
-    parser.add_argument("--policy-path", type=str, default=None, help="Path of pretrained policy to load")
+    parser.add_argument("--path", type=str, default=None, help="Path of pretrained policy to load")
     parser.add_argument("--normalization-dir", type=str, default=None, help="Directory contatining normalization statistics of pretrained policy")
+
+    parser.add_argument("--render", type=bool, default=False, help="")
 
 
 
@@ -560,8 +562,10 @@ def main():
 
     capture_video = False
     # env setup
+    # env_kwargs = {'ctrl_cost_weight': 1, 'forward_reward_weight': 1e-3, 'render_mode': 'human' if args.render else None}
+    args.env_kwargs = {}
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, i, capture_video, run_name, args.gamma, args.device) for i in range(args.num_envs)]
+        [make_env(args.env_id, i, capture_video, run_name, args.gamma, args.device, args.env_kwargs) for i in range(args.num_envs)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
     env_reward_normalize = envs.envs[0].env
@@ -575,13 +579,12 @@ def main():
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # load pretrained policy and normalization information
-    if args.policy_path:
-        agent = torch.load(args.policy_path).to(args.device)
-    if args.normalization_dir:
-        with open(f'{args.normalization_dir}/env_obs_normalize', 'rb') as f:
+    if args.path:
+        agent = torch.load(f'{args.path}/best_model.zip').to(args.device)
+        with open(f'{args.path}/env_obs_normalize', 'rb') as f:
             obs_rms = pickle.load(f)
             env_obs_normalize.obs_rms = obs_rms
-        with open(f'{args.normalization_dir}/env_reward_normalize', 'rb') as f:
+        with open(f'{args.path}/env_reward_normalize', 'rb') as f:
             return_rms = pickle.load(f)
             env_reward_normalize.return_rms = return_rms
 
@@ -592,7 +595,7 @@ def main():
 
     # Evaluation modules
     eval_module = Evaluate(model=agent, eval_env=None, n_eval_episodes=args.eval_episodes, log_path=args.save_dir,
-                           device=args.device)
+                           device=args.device) #, save_model=True)
     eval_module_props = Evaluate(model=agent_props, eval_env=None, n_eval_episodes=args.eval_episodes,
                                  log_path=args.save_dir, device=args.device, suffix='props')
 
@@ -620,12 +623,13 @@ def main():
     ppo_logs = defaultdict(lambda: [])
     props_logs = defaultdict(lambda: [])
     sampling_error_logs = defaultdict(lambda: [])
-    times = []
 
     start_time = time.time()
     global_step = 0
     target_update = 0
     props_update = 0
+    times = [0]
+    target_updates = [0]
 
     # evaluate initial policy
     eval_module.evaluate(global_step, train_env=envs, noise=False)
@@ -654,6 +658,11 @@ def main():
             actions_buffer[buffer_pos] = action
 
         next_obs, reward, terminated, truncated, infos = envs.step(action.cpu().numpy())
+
+        # if np.all(terminated):
+            # print(global_step)
+            # reward -= 0.1
+
         reward = env_reward_normalize.unnormalize(reward)
         rewards_buffer[buffer_pos] = torch.tensor(reward).to(args.device).view(-1)
         next_obs, next_done = torch.Tensor(next_obs).to(args.device), torch.Tensor(terminated).to(args.device)
@@ -671,10 +680,7 @@ def main():
                 writer.add_scalar("charts/episode_length", info["episode"]["l"], global_step)
 
         # determine what all needs to be done at this timestep
-        if args.reinforce:
-            do_ppo_update = next_done
-        else:
-            do_ppo_update = global_step % args.num_steps == 0
+        do_ppo_update = global_step % args.num_steps == 0
         do_props_update = args.props and global_step % args.props_num_steps == 0
         do_se = args.se and global_step % (args.num_steps * args.se_freq) == 0
         do_eval = (global_step + 1) % args.eval_freq == 0
@@ -719,33 +725,21 @@ def main():
                 agent_buffer.append(copy.deepcopy(agent))
 
             # Compute advantages and returns. If props_adv = True, then we must recompute advantages before every PROPS update, not just every target update.
-            if args.reinforce:
-                pass
-                # with torch.no_grad():
-                #     next_value = agent.get_value(next_obs).reshape(1, -1)
-                #     advantages = torch.zeros_like(rewards).to(args.device)
-                #     lastgaelam = 0
-                #     num_steps = indices.shape[0]
-                #     for t in range(num_steps):
-                #
-                #         advantages[t] = return_to_go[t] - values[t]
-                #     returns = advantages + values
-            else:
-                with torch.no_grad():
-                    next_value = agent.get_value(next_obs).reshape(1, -1)
-                    advantages = torch.zeros_like(rewards).to(args.device)
-                    lastgaelam = 0
-                    num_steps = indices.shape[0]
-                    for t in reversed(range(num_steps)):
-                        if t == num_steps - 1:
-                            nextnonterminal = 1.0 - next_done
-                            nextvalues = next_value
-                        else:
-                            nextnonterminal = 1.0 - dones[t + 1]
-                            nextvalues = values[t + 1]
-                        delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                        advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-                    returns = advantages + values
+            with torch.no_grad():
+                next_value = agent.get_value(next_obs).reshape(1, -1)
+                advantages = torch.zeros_like(rewards).to(args.device)
+                lastgaelam = 0
+                num_steps = indices.shape[0]
+                for t in reversed(range(num_steps)):
+                    if t == num_steps - 1:
+                        nextnonterminal = 1.0 - next_done
+                        nextvalues = next_value
+                    else:
+                        nextnonterminal = 1.0 - dones[t + 1]
+                        nextvalues = values[t + 1]
+                    delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                    advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                returns = advantages + values
 
             # Compute sampling error *before* updating the target policy.
             if do_se:
@@ -768,6 +762,7 @@ def main():
             # PPO update
             if do_ppo_update:
                 target_update += 1
+                target_updates.append(target_update)
                 # Annealing learning rate
                 if args.anneal_lr:
                     frac = 1.0 - (target_update - 1.0) / num_updates
@@ -814,6 +809,7 @@ def main():
             np.savez(
                 eval_module.log_path,
                 times=times,
+                updates=target_updates,
                 timesteps=eval_module.evaluations_timesteps,
                 returns=eval_module.evaluations_returns,
                 successes=eval_module.evaluations_successes,
