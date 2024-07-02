@@ -230,12 +230,12 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
             # Policy loss
-            if args.actor_critic:
-                pg_loss = (-mb_advantages * newlogprob).mean()
-            else:
-                pg_loss1 = -mb_advantages * ratio
-                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+            # if args.actor_critic:
+            #     pg_loss = (-mb_advantages * newlogprob).mean()
+            # else:
+            pg_loss1 = -mb_advantages * ratio
+            pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+            pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             # Value loss
             newvalue = newvalue.view(-1)
@@ -685,9 +685,9 @@ def main():
         do_se = args.se and global_step % (args.num_steps * args.se_freq) == 0
         do_eval = (global_step + 1) % args.eval_freq == 0
 
-        if args.se_debug:
-            before_do_se = (global_step - (args.buffer_batches-1)*args.num_steps) % (args.num_steps * args.se_freq) == 0
-            do_props_update = before_do_se and global_step % args.props_num_steps == 0
+        # if args.se_debug:
+        #     before_do_se = (global_step - (args.buffer_batches-1)*args.num_steps) % (args.num_steps * args.se_freq) == 0
+        #     do_props_update = before_do_se and global_step % args.props_num_steps == 0
 
         if do_ppo_update or do_props_update:
             # Reorder the replay buffer from youngest to oldest so we can reuse cleanRL's code to compute advantages
