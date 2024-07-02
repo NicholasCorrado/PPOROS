@@ -41,10 +41,10 @@ props_target_kl: 0.05
 props_update_epochs: 16
 reinforce: 1
 results_dir: results
-results_subdir: b_1/s_256/lr_0.001/
+results_subdir: b_2/s_256/lr_0.001/
 ros: 0
 run_id: 0
-save_dir: results/Walker2d-v4/reinforce_on_policy/b_1/s_256/lr_0.001//run_0
+save_dir: results/Walker2d-v4/reinforce_on_policy/b_2/s_256/lr_0.001//run_0
 se: 0
 se_epochs: 250
 se_freq: null
