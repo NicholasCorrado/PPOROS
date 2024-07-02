@@ -1,9 +1,9 @@
 !!python/object:argparse.Namespace
 algo: reinforce_on_policy
 anneal_lr: false
-batch_size: 256
-buffer_batches: 1
-buffer_size: 256
+batch_size: 512
+buffer_batches: 2
+buffer_size: 512
 clip_coef: 0.2
 clip_vloss: true
 cuda: true
@@ -19,7 +19,7 @@ gamma: 0.99
 learning_rate: 0.001
 log_stats: 1
 max_grad_norm: 0.5
-minibatch_size: 256
+minibatch_size: 512
 norm_adv: true
 normalization_dir: null
 num_envs: 1

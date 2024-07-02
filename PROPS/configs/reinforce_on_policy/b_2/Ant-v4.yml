@@ -1,16 +1,16 @@
 !!python/object:argparse.Namespace
 algo: reinforce_on_policy
 anneal_lr: false
-batch_size: 256
-buffer_batches: 1
-buffer_size: 256
+batch_size: 512
+buffer_batches: 2
+buffer_size: 512
 clip_coef: 0.2
 clip_vloss: true
 cuda: true
 device: !!python/object/apply:torch.device
 - cpu
 ent_coef: 0.01
-env_id: Walker2d-v4
+env_id: Ant-v4
 eval_episodes: 20
 eval_freq: 250000
 exp_name: ppo_props_continuous
@@ -19,7 +19,7 @@ gamma: 0.99
 learning_rate: 0.001
 log_stats: 1
 max_grad_norm: 0.5
-minibatch_size: 256
+minibatch_size: 512
 norm_adv: true
 normalization_dir: null
 num_envs: 1
@@ -44,7 +44,7 @@ results_dir: results
 results_subdir: b_1/s_256/lr_0.001/
 ros: 0
 run_id: 0
-save_dir: results/Walker2d-v4/reinforce_on_policy/b_1/s_256/lr_0.001//run_0
+save_dir: results/Ant-v4/reinforce_on_policy/b_1/s_256/lr_0.001//run_0
 se: 0
 se_epochs: 250
 se_freq: null

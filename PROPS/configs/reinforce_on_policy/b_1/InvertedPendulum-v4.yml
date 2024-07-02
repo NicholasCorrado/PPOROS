@@ -11,7 +11,7 @@ device: !!python/object/apply:torch.device
 - cpu
 ent_coef: 0.01
 env_id: InvertedPendulum-v4
-eval_episodes: 20
+eval_episodes: 2500
 eval_freq: 10
 exp_name: ppo_props_continuous
 gae_lambda: 0.95

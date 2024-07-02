@@ -12,7 +12,7 @@ device: !!python/object/apply:torch.device
 ent_coef: 0.01
 env_id: Humanoid-v4
 eval_episodes: 20
-eval_freq: 50
+eval_freq: 250000
 exp_name: ppo_props_continuous
 gae_lambda: 0.95
 gamma: 0.99
