@@ -157,12 +157,12 @@ def normalize_reward(return_rms, rewards):
     """Normalizes the rewards with the running mean rewards and their variance."""
     return rewards / np.sqrt(return_rms.var + 1e-8)
 
-def make_env(env_id, idx, capture_video, run_name, gamma, device):
+def make_env(env_id, idx, capture_video, run_name, gamma, device, env_kwargs):
     def thunk():
         if capture_video:
-            env = gym.make(env_id, render_mode="rgb_array")
+            env = gym.make(env_id, render_mode="rgb_array", **env_kwargs)
         else:
-            env = gym.make(env_id)
+            env = gym.make(env_id, **env_kwargs)
         env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
         env = gym.wrappers.RecordEpisodeStatistics(env)
         if capture_video:
@@ -459,16 +459,16 @@ class Evaluate:
             print(f"Eval num_timesteps={t}, " f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}")
             print(f"Eval num_timesteps={t}, " f"episode_success={mean_success:.2f} +/- {std_success:.2f}")
 
-            if mean_reward > self.best_mean_reward:
-                print("New best mean reward!")
-                if self.save_model:
-                    torch.save(self.model, os.path.join(self.best_model_save_path, "best_model.zip"))
-                    with open(f'{self.best_model_save_path}/env_obs_normalize', 'wb') as f:
-                        pickle.dump(env_obs_normalize.obs_rms, f)
-                    with open(f'{self.best_model_save_path}/env_reward_normalize', 'wb') as f:
-                        pickle.dump(env_reward_normalize.return_rms, f)
+            # if mean_reward > self.best_mean_reward:
+            #     print("New best mean reward!")
+            if self.save_model:
+                torch.save(self.model, os.path.join(self.best_model_save_path, "best_model.zip"))
+                with open(f'{self.best_model_save_path}/env_obs_normalize', 'wb') as f:
+                    pickle.dump(env_obs_normalize.obs_rms, f)
+                with open(f'{self.best_model_save_path}/env_reward_normalize', 'wb') as f:
+                    pickle.dump(env_reward_normalize.return_rms, f)
 
-                self.best_mean_reward = mean_reward
+            # self.best_mean_reward = mean_reward
 
         return mean_reward, std_reward
 
