@@ -124,12 +124,12 @@ def parse_args():
         algo = 'reinforce'
         args.update_epochs = 1
         args.minibatch_size = args.buffer_size
-        args.ent_coef = 0
+        # args.ent_coef = 0
     elif args.actor_critic:
         algo = 'actor_critic'
         args.update_epochs = 1
         args.minibatch_size = args.buffer_size
-        args.ent_coef = 0
+        # args.ent_coef = 0
     else:
         algo = 'ppo'
     if args.props:
