@@ -232,12 +232,12 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
             # Policy loss
-            # if args.actor_critic:
-            #     pg_loss = (-mb_advantages * newlogprob).mean()
-            # else:
-            pg_loss1 = -mb_advantages * ratio
-            pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-            pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+            if args.reinforce:
+                pg_loss = (-mb_advantages * ratio).mean()
+            else:
+                pg_loss1 = -mb_advantages * ratio
+                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             # Value loss
             newvalue = newvalue.view(-1)
@@ -306,7 +306,6 @@ def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, retur
             writer.add_scalar("ppo/grad_norm", np.mean(grad_norms), global_step)
 
     return ppo_stats
-
 
 def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, advantages, global_step, args, writer, means, stds):
     # PROPS UPDATE
@@ -764,7 +763,6 @@ def main():
             # PPO update
             if do_ppo_update:
                 target_update += 1
-                target_updates.append(target_update)
                 # Annealing learning rate
                 if args.anneal_lr:
                     frac = 1.0 - (target_update - 1.0) / num_updates
@@ -807,6 +805,7 @@ def main():
                 for key, val in props_stats.items():
                     props_logs[key].append(props_stats[key])
             times.append(current_time)
+            target_updates.append(target_update)
 
             np.savez(
                 eval_module.log_path,
