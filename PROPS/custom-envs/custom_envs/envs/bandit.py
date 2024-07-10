@@ -35,3 +35,32 @@ class BanditEnv(gym.Env):
         options: Optional[dict] = None,
     ):
         return np.array([1]), {}
+
+
+class SillyBanditEnv(BanditEnv):
+    def __init__(self, n=10, reward=1):
+        super().__init__(n=n)
+        self.reward = 1
+
+    def step(self, a):
+        reward = self.reward
+        terminated = True
+        truncated = False
+        info = {}
+        return np.array([1]), reward, terminated, truncated, info
+
+
+
+class SillyBanditNegativeEnv(BanditEnv):
+    def __init__(self, n=10):
+        super().__init__(n=n)
+
+    def step(selfself, a):
+        reward = -1
+        terminated = True
+        truncated = False
+        info = {}
+        return np.array([1]), reward, terminated, truncated, info
+
+
+

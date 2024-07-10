@@ -45,6 +45,24 @@ register(
 )
 
 register(
+    id="SillyBandit-v0",
+    entry_point="custom_envs.envs.bandit:SillyBanditEnv",
+    max_episode_steps=1,
+    # kwargs={
+    #     'n': 10
+    # }
+)
+
+register(
+    id="SillyBanditNegative-v0",
+    entry_point="custom_envs.envs.bandit:SillyBanditEnv",
+    max_episode_steps=1,
+    kwargs={
+        'reward': -1
+    }
+)
+
+register(
     id="Bandit1000-v0",
     entry_point="custom_envs.envs.bandit:BanditEnv",
     max_episode_steps=1,
@@ -86,7 +104,16 @@ for l in [5, 10, 20]:
     register(
         id=f"GridWorld-{l}x{l}-v0",
         entry_point="custom_envs.envs:GridWorldEnv",
-        max_episode_steps=2*l,
+        max_episode_steps=3*l,
+        kwargs={
+            'shape': (l, l),
+        },
+    )
+
+    register(
+        id=f"GridWorldContinuing-{l}x{l}-v0",
+        entry_point="custom_envs.envs:GridWorldEnv",
+        max_episode_steps=100000,
         kwargs={
             'shape': (l, l),
         },
