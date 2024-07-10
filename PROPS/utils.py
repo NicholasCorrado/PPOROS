@@ -302,7 +302,7 @@ class AgentDiscrete(nn.Module):
                 # layer_init(nn.Linear(64, 1), std=1.0),
             )
             self.actor = nn.Sequential(
-                layer_init(nn.Linear(input_dim, envs.single_action_space.n, bias=False), std=0.01),
+                layer_init(nn.Linear(input_dim, envs.single_action_space.n), std=0.01),
                 # activation_fn(),
                 # layer_init(nn.Linear(64, 64)),
                 # activation_fn(),

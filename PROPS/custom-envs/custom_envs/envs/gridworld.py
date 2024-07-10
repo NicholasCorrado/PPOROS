@@ -13,11 +13,11 @@ class GridWorldEnv(gym.Env):
         self.observation_space = gym.spaces.Box(low=0, high=1, shape=(np.product(self.shape),))
 
         self.nrows, self.ncols = self.shape
-        self.rowcol = (self.shape-1)/2
-        self.init_rowcol = (self.shape-1)/2 # agent starts in middle of the grid.
+        self.rowcol = (self.shape-1)/2-1
+        self.init_rowcol = (self.shape-1)/2-1 # agent starts in middle of the grid.
 
         self.rewards = -0.01 * np.ones(shape=self.shape)
-        self.rewards[0, 0] = 0.5 # subopt
+        self.rewards[0, 0] = 0 # subopt
         self.rewards[self.nrows-1, self.ncols-1] = 1
 
         self.terminals = np.zeros(shape=self.shape, dtype=bool)
@@ -68,8 +68,16 @@ class GridWorldEnv(gym.Env):
 
         return state, {}
 
+
+class GridWorldContinuingEnv(GridWorldEnv):
+    def __init__(self, shape=(5,5)):
+        super().__init__()
+        self.terminals = np.zeros(shape=self.shape, dtype=bool)
+        print(self.rewards)
+        print(self.terminals)
+
 class GridWorldCliffEnv(GridWorldEnv):
-    def __init__(self, shape=(5,10)):
+    def __init__(self, shape=(5,5)):
         super().__init__(shape)
         self.shape = np.array(shape)
         self.action_space = gym.spaces.Discrete(4)
