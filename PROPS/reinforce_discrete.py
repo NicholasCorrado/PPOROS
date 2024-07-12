@@ -66,7 +66,7 @@ def parse_args():
     # Saving and logging parameters
     parser.add_argument("--log-stats", type=int, default=1, help="If true, training statistics are logged")
     parser.add_argument("--eval", type=int, default=1, help="Whether or not to evaluate target policy")
-    parser.add_argument("--eval-freq", type=int, default=1000*1, help="Evaluate PPO and/or PROPS policy every eval_freq PPO updates")
+    parser.add_argument("--eval-freq", type=int, default=10*1, help="Evaluate PPO and/or PROPS policy every eval_freq PPO updates")
     parser.add_argument("--eval-episodes", type=int, default=100, help="Number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
@@ -100,8 +100,10 @@ def parse_args():
     parser.add_argument("--linear", type=int, default=1, help="")
     parser.add_argument("--actor-critic", type=int, default=0, help="")
     parser.add_argument("--reinforce", type=int, default=0, help="")
-    parser.add_argument("--oracle-adaptive", type=int, default=1, help="")
+    parser.add_argument("--oracle-adaptive", type=int, default=0, help="")
     parser.add_argument("--random-sampling", type=int, default=0, help="")
+    parser.add_argument("--exact", type=int, default=0, help="")
+
 
     # PROPS/ROS hyperparameters
     parser.add_argument("--props", type=int, default=0, help="If True, use PROPS to collect data, otherwise use on-policy sampling")
@@ -284,7 +286,7 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
         b_advantages = advantages[start:end].reshape(-1)
 
     batch_size = b_obs.shape[0]
-    minibatch_size = min(batch_size//args.prop_num_minibatches, batch_size)
+    minibatch_size = min(50, batch_size)
     b_inds = np.arange(batch_size)
     clipfracs = []
 
@@ -480,6 +482,8 @@ def main():
     updates = [0]
     timesteps = [0]
     all_grad_accuracy = []
+    all_grad_empirical = []
+    all_grad_true = []
 
     start_time = time.time()
     global_step = 0
@@ -507,6 +511,7 @@ def main():
 
         A_init, q_init, v_init = value_iteration(envs.envs[0].unwrapped, 100)
         grad_true = compute_gradient(envs.envs[0].unwrapped, agent.get_pi(), eval_obs, eval_actions, A_init)
+        grad_true_norm = np.linalg.norm(grad_true)
 
     if args.props_eval:
         eval_module_props.evaluate(global_step, train_env=envs, noise=False)
@@ -522,6 +527,7 @@ def main():
 
     episode_t = 0
     ep_count = 0
+    theta = np.zeros((25, 4))
     for global_step in range(args.total_timesteps):
         # collect a transition
         global_step += 1 * args.num_envs
@@ -530,7 +536,15 @@ def main():
         dones_buffer[buffer_pos] = next_done
 
         with torch.no_grad():
-            if args.oracle_adaptive:
+            if args.exact:
+                s_idx = np.argmax(next_obs)
+                theta_s = theta[s_idx]
+                pi = np.exp(theta_s)/np.sum(np.exp(theta_s))
+                a_idx = np.random.choice(possible_actions, p=pi)
+                action = torch.Tensor([a_idx])
+                values = torch.Tensor([0])
+
+            elif args.oracle_adaptive:
                 s_idx = np.argmax(next_obs)
                 sa = sa_counts[s_idx]
                 # never_sampled_mask = (sa == 0)
@@ -598,6 +612,8 @@ def main():
 
         # determine what all needs to be done at this timestep
         do_ppo_update = False
+        if args.exact:
+            do_ppo_update = True
         if next_done:
             returns_buffer[return_buffer_pos] = discounted_return
             return_buffer_pos += 1
@@ -607,6 +623,7 @@ def main():
             episode_t = 0
             traj_count += 1
             ep_count += 1
+            print(traj_count, global_step, reward)
         if traj_count == args.num_traj:
             do_ppo_update = True
         if traj_count == (args.num_traj * args.buffer_batches):
@@ -661,9 +678,14 @@ def main():
             if do_ppo_update:
                 target_update += 1
 
-                # ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
-                ppo_stats, grad_empirical = update_reinforce(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
-                    # print(global_step)
+                if args.exact:
+                    eval_returns, eval_obs, eval_actions, eval_rewards, sa_eval = eval_module.simulate(train_env=envs)
+                    A_init, q_init, v_init = value_iteration(envs.envs[0].unwrapped, 20)
+                    grad_true = compute_gradient(envs.envs[0].unwrapped, agent.get_pi(), eval_obs, eval_actions, A_init)
+                    theta += args.learning_rate*grad_true.reshape(25, 4)
+                else:
+                    # ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+                    ppo_stats, grad_empirical = update_reinforce(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
 
             if do_props_update:
                 props_update += 1
@@ -681,7 +703,10 @@ def main():
             agent_props = agent_props.to(args.device)
             # # Evaluate PPO policy
             if args.eval:
-                target_ret, target_std, sa_eval = eval_module.evaluate(global_step, train_env=envs, noise=False)
+                if args.exact:
+                    target_ret, target_std, sa_eval = eval_module.evaluate(global_step, train_env=envs, noise=False, theta=theta)
+                else:
+                    target_ret, target_std, sa_eval = eval_module.evaluate(global_step, train_env=envs, noise=False)
 
             if buffer_pos == 0:
                 obs = obs_buffer
@@ -743,12 +768,14 @@ def main():
                 sa_true = sa_eval / ns_eval
 
             grad_empirical = compute_gradient(envs.envs[0].unwrapped, agent.get_pi(), obs.detach().numpy(), actions.detach().numpy().astype(int), A_init)
+            # grad_empirical_norm = np.linalg.norm(grad_empirical)
 
+            all_grad_empirical.append(grad_empirical)
+            all_grad_true.append(grad_true)
+            # all_grad_norm.append(grad_empirical_norm)
 
-            grad_accuracy = (grad_empirical @ grad_true)/np.linalg.norm(grad_empirical)/np.linalg.norm(grad_true)
-            # print(torch.norm(grad_empirical))
+            grad_accuracy = (grad_empirical @ grad_true)/np.linalg.norm(grad_empirical)/grad_true_norm
             all_grad_accuracy.append(grad_accuracy.item())
-            # print(all_grad_accuracy)
 
             ns = sa_counts.sum()
             se = np.abs(sa_counts/ns - sa_true).sum()
@@ -775,6 +802,8 @@ def main():
                 # pi=all_pi,
                 se=all_se,
                 grad_accuracy=all_grad_accuracy,
+                grad_empirical=all_grad_empirical,
+                grad_true=all_grad_true,
                 **ppo_logs,
                 **props_logs,
             )

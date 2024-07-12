@@ -295,14 +295,14 @@ class AgentDiscrete(nn.Module):
 
         if linear:
             self.critic = nn.Sequential(
-                layer_init(nn.Linear(input_dim, 1), std=1.0),
+                layer_init(nn.Linear(input_dim, 1), std=0),
                 # activation_fn(),
                 # layer_init(nn.Linear(64, 64)),
                 # activation_fn(),
                 # layer_init(nn.Linear(64, 1), std=1.0),
             )
             self.actor = nn.Sequential(
-                layer_init(nn.Linear(input_dim, envs.single_action_space.n), std=0.01),
+                layer_init(nn.Linear(input_dim, envs.single_action_space.n), std=0),
                 # activation_fn(),
                 # layer_init(nn.Linear(64, 64)),
                 # activation_fn(),
@@ -574,11 +574,11 @@ class EvaluateDiscrete:
         # For computing success rate
         self._is_success_buffer = []
 
-    def evaluate(self, t, train_env, noise):
+    def evaluate(self, t, train_env, noise, pi=None):
         # if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
 
         self.eval_env = copy.deepcopy(train_env)
-        returns, successes, sa_counts = self._evaluate(noise=noise)
+        returns, successes, sa_counts = self._evaluate(noise=noise, pi=pi)
 
         if self.log_path is not None:
             self.evaluations_timesteps.append(t)
@@ -608,7 +608,7 @@ class EvaluateDiscrete:
 
         return mean_reward, std_reward, sa_counts
 
-    def _evaluate(self, noise):
+    def _evaluate(self, noise, pi=None):
         eval_returns = []
         eval_successes = []
         sa_counts = np.zeros(shape=(self.eval_env.observation_space.shape[-1], self.eval_env.single_action_space.n))
@@ -622,10 +622,14 @@ class EvaluateDiscrete:
             while not done:
                 step += 1
                 # ALGO LOGIC: put action logic here
-                with torch.no_grad():
-                    actions = self.model.get_action(torch.Tensor(obs).to(self.device), noise=noise)
-                    # actions = self.model(torch.Tensor(obs).to(self.device))
-                    actions = actions.cpu().numpy()
+                if pi is not None:
+                    s_idx = np.argmax(obs)
+                    actions = [np.random.choice(np.arange(self.eval_env.single_action_space.n), p=pi[s_idx])]
+                else:
+                    with torch.no_grad():
+                        actions = self.model.get_action(torch.Tensor(obs).to(self.device), noise=noise)
+                        # actions = self.model(torch.Tensor(obs).to(self.device))
+                        actions = actions.cpu().numpy()
 
                 # s_idx = np.where(obs == 1)[1]
                 # sa_counts[s_idx, actions] += 1
