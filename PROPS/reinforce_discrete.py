@@ -623,7 +623,7 @@ def main():
             episode_t = 0
             traj_count += 1
             ep_count += 1
-            print(traj_count, global_step, reward)
+            # print(traj_count, global_step, reward)
         if traj_count == args.num_traj:
             do_ppo_update = True
         if traj_count == (args.num_traj * args.buffer_batches):
