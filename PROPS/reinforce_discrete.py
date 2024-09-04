@@ -16,12 +16,12 @@ import torch.optim as optim
 import yaml
 
 from PROPS.gridworld.advantage import value_iteration
-from PROPS.utils import Evaluate, AgentDiscrete, EvaluateDiscrete, ConfigLoader
+from PROPS.utils import Evaluate, AgentDiscrete, EvaluateDiscrete, ConfigLoader, StoreDict
 from PROPS.utils import get_latest_run_id, make_env, Agent
 
-def make_env(env_id, seed, idx, capture_video, run_name):
+def make_env(env_id, env_kwargs, seed, idx, capture_video, run_name):
     def thunk():
-        env = gym.make(env_id)
+        env = gym.make(env_id, **env_kwargs)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         if capture_video:
             if idx == 0:
@@ -74,6 +74,7 @@ def parse_args():
 
     # General training parameters (both PROPS and PPO)
     parser.add_argument("--env-id", type=str, default="GridWorld-5x5-v0", help="Environment id")
+    parser.add_argument("--env-kwargs", type=str, nargs="*", action=StoreDict, default={}, help="Optional keyword argument to pass to the env constructor")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
     parser.add_argument("--total-timesteps", type=int, default=250000*1, help="Number of timesteps to train")
     parser.add_argument("--seed", type=int, default=0, help="Seed of the experiment")
@@ -421,7 +422,7 @@ def main():
     capture_video = False
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, args.seed + i, i, capture_video, run_name) for i in range(args.num_envs)]
+        [make_env(args.env_id, args.env_kwargs, args.seed + i, i, capture_video, run_name) for i in range(args.num_envs)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only continuous action space is supported"
 

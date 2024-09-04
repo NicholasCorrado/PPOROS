@@ -5,7 +5,7 @@ import numpy as np
 
 
 class GridWorldEnv(gym.Env):
-    def __init__(self, shape=(5,5)):
+    def __init__(self, shape=(5,5), rewards=(-0.01, 0.5, 1)):
         super().__init__()
 
         self.shape = np.array(shape)
@@ -16,9 +16,9 @@ class GridWorldEnv(gym.Env):
         self.rowcol = (self.shape-1)/2
         self.init_rowcol = (self.shape-1)/2 # agent starts in middle of the grid.
 
-        self.rewards = -0.01 * np.ones(shape=self.shape)
-        self.rewards[0, 0] = 0.5 # subopt
-        self.rewards[self.nrows-1, self.ncols-1] = 1
+        self.rewards = rewards[0] * np.ones(shape=self.shape)
+        self.rewards[0, 0] = rewards[1] # subopt
+        self.rewards[self.nrows-1, self.ncols-1] = rewards[2]
 
         self.terminals = np.zeros(shape=self.shape, dtype=bool)
         self.terminals[self.rewards > 0] = True
