@@ -4,10 +4,6 @@ from matplotlib import pyplot as plt
 
 import custom_envs
 
-
-
-
-
 def value_iteration(env, max_iterations=100, theta=0.000001):
     shape = env.shape
     rows, cols = shape[0], shape[1]

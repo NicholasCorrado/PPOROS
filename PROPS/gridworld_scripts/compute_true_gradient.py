@@ -114,15 +114,19 @@ def simulate(env, num_episodes):
 
 if __name__ == '__main__':
     env = gym.make('GridWorld-5x5-v0')
-    obs, actions, sa = simulate(env, num_episodes=10000)
+    obs, actions, sa = simulate(env, num_episodes=100000)
 
     sa_occupancy = sa / sa.sum()
     adv, q, v = value_iteration(env, 100)
     pi = np.ones(shape=(25, 4))*0.25
-    grad_true = compute_gradient(env, pi, obs, actions, adv)
-    grad_true_norm = np.linalg.norm(grad_true)
+    grad = compute_gradient(env, pi, obs, actions, adv)
 
     print(len(obs))
 
     os.makedirs('data', exist_ok=True)
-    np.save('data/grad_true.npy', grad_true)
+    np.save('data/grad_true.npy', grad)
+    np.save('data/adv_true.npy', adv)
+    np.save('data/q_true.npy', q)
+    np.save('data/v_true.npy', v)
+    np.save('data/sa_occupancy_true.npy', sa_occupancy)
+
