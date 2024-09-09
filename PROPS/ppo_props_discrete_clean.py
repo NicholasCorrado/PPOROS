@@ -455,7 +455,7 @@ def main():
     # grad_true = np.load('gridworld_scripts/data/grad_true.npy')
     # adv_true = np.load('gridworld_scripts/data/adv_true.npy')
 
-    env = gym.make('GridWorld-5x5-v0')
+    env = gym.make(args.env_id, **args.env_kwargs)
     obs, actions, sa = simulate(env, num_episodes=10000)
 
     sa_occupancy_true = sa / sa.sum()
