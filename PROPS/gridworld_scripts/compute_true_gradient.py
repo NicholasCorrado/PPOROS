@@ -15,7 +15,7 @@ def compute_gradient(env, pi, s, a, A):
     s = np.argmax(s, axis=-1).reshape(-1)
     a = a.reshape(-1)
     # grad = (A[s, a]*(1 - pi[s, a])).mean(axis=-1)
-    grad = np.zeros((np.prod(env.shape), 4))
+    grad = np.zeros((np.prod(env.shape), env.action_space.n))
     for si, ai in zip(s, a):
         grad[si, ai] += A[si, ai] * (1 - pi[si, ai])
 
@@ -82,6 +82,61 @@ def value_iteration(env, max_iterations=100, theta=0.000001):
     A = q - np.tile(v, (4, 1)).T
     return A, q, v
 
+
+
+def value_iteration_1d(env, max_iterations=100, theta=0.000001):
+    shape = env.shape
+    rows, cols = shape[0], shape[1]
+    n_states = rows * cols
+    gamma = 0.99
+    n_actions = 2
+
+    v = np.zeros(n_states)
+    q = np.zeros((n_states, n_actions))
+    r = env.rewards.reshape(-1)
+    pi = np.ones((n_states, n_actions)) * 0.25
+
+    #######################################
+    ### START: CREATE TRANSITION MATRIX ###
+    #######################################
+    P = np.zeros((rows, cols, n_actions, rows, cols))
+    for row in range(rows):
+        for col in range(cols):
+            for a in range(n_actions):
+                next_row = row
+                next_col = col
+                # up
+                if a == 0:
+                    next_col -= 1
+                # left
+                elif a == 1:
+                    next_col += 1
+
+                next_row = np.clip(next_row, 0, rows - 1)
+                next_col = np.clip(next_col, 0, cols - 1)
+
+                P[row, col, a, next_row, next_col] = 1
+
+    P = P.reshape((n_states, n_actions, n_states))
+    P[0, :, :] = 0
+    P[n_states - 1, :, :] = 0
+    #####################################
+    ### END: CREATE TRANSITION MATRIX ###
+    #####################################
+
+    # value iteration
+    for i in range(max_iterations):
+        for s in range(1, n_states - 1):
+            for a in range(n_actions):
+                new_q = 0
+                for ns in range(n_states):
+                    new_q += P[s, a, ns] * (r[ns] + gamma * v[ns])
+                q[s, a] = new_q
+            v[s] = q[s, :] @ pi[s, :]
+
+    A = q - np.tile(v, (n_actions, 1)).T
+    return A, q, v
+
 def simulate(env, num_episodes):
 
     sa_counts = np.zeros(shape=(env.observation_space.shape[-1], env.action_space.n))
@@ -110,10 +165,16 @@ def simulate(env, num_episodes):
 
             obs = next_obs
 
+        if (episode_i+1) % 1000 == 0:
+            print(episode_i+1)
+
     return np.array(all_obs), np.array(all_actions), sa_counts
 
 if __name__ == '__main__':
-    env = gym.make('GridWorld-5x5-v0')
+    env_id = 'GridWorld-5x5-v0'
+    env = gym.make(env_id)
+    # env = gym.make('GridWorld1D-10-v0')
+
     obs, actions, sa = simulate(env, num_episodes=100000)
 
     sa_occupancy = sa / sa.sum()
@@ -122,11 +183,12 @@ if __name__ == '__main__':
     grad = compute_gradient(env, pi, obs, actions, adv)
 
     print(len(obs))
+    print(q)
 
-    os.makedirs('data', exist_ok=True)
-    np.save('data/grad_true.npy', grad)
-    np.save('data/adv_true.npy', adv)
-    np.save('data/q_true.npy', q)
-    np.save('data/v_true.npy', v)
-    np.save('data/sa_occupancy_true.npy', sa_occupancy)
+    os.makedirs(f'data/{env_id}', exist_ok=True)
+    np.save(f'data/{env_id}/grad_true.npy', grad)
+    np.save(f'data/{env_id}/adv_true.npy', adv)
+    np.save(f'data/{env_id}/q_true.npy', q)
+    np.save(f'data/{env_id}/v_true.npy', v)
+    np.save(f'data/{env_id}/sa_occupancy_true.npy', sa_occupancy)
 

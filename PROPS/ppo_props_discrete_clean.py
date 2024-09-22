@@ -134,15 +134,28 @@ def parse_args():
     assert not (args.reinforce == 1 and args.actor_critic == 1)
     assert not (args.props == 1 and args.ros == 1)
 
-
-    algo = 'reinforce'
-    args.update_epochs = 1
-    args.ent_coef = 0
-    args.gae_lambda = 1 # advantage estimates reduce to MC discounted return estimates
+    if args.reinforce:
+        algo = 'reinforce'
+        args.update_epochs = 1
+        args.minibatch_size = args.buffer_size
+        # args.ent_coef = 0
+        args.gae_lambda = 1 # advantage estimates reduce to MC discounted return estimates
+    elif args.actor_critic:
+        algo = 'actor_critic'
+        args.update_epochs = 1
+        args.minibatch_size = args.buffer_size
+        # args.ent_coef = 0
+    else:
+        algo = 'ppo'
+    # algo = 'reinforce'
+    # args.update_epochs = 1
+    # args.ent_coef = 0
+    # args.gae_lambda = 1 # advantage estimates reduce to MC discounted return estimates
     if args.props:
         sampling = 'props'
     elif args.ros:
         sampling = 'ros'
+        args.props_num_steps = 1
         args.props_update_epochs = 1
         args.props_clip_coef = 9999999
         args.props_target_kl = 9999999
@@ -192,7 +205,7 @@ def update_reinforce(agent, optimizer, envs, obs, logprobs, actions, advantages,
     v_loss = 0.5 * ((newvalues - b_advantages) ** 2).mean()
     entropy_loss = entropy.mean()
 
-    loss = pg_loss + v_loss * args.vf_coef # - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+    loss = pg_loss + v_loss * args.vf_coef - args.ent_coef * entropy_loss
 
     optimizer.zero_grad()
     loss.backward()
@@ -285,10 +298,7 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
                 approx_kl = ((props_ratio - 1) - props_logratio).mean()
                 clipfracs += [((props_ratio - 1.0).abs() > args.props_clip_coef).float().mean().item()]
 
-                if args.props_target_kl:
-                    if approx_kl > args.props_target_kl:
-                        done_updating = True
-                        break
+
                 approx_kl_to_log = approx_kl
 
             kl_regularizer_loss = (mb_probs*(mb_logprobs - props_logprobs)).mean()
@@ -301,7 +311,7 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
             if args.ros:
-                pg_loss = -props_logratio.mean()
+                pg_loss = props_logratio.mean()
 
             entropy_loss = entropy.mean()
             loss = pg_loss + args.props_lambda * kl_regularizer_loss
@@ -314,6 +324,12 @@ def update_props(agent_props, envs, props_optimizer, obs, logprobs, actions, adv
 
             props_optimizer.step()
             num_update_minibatches += 1
+
+        if args.props_target_kl:
+            # print(approx_kl)
+            if approx_kl > args.props_target_kl:
+                done_updating = True
+                break
 
         if done_updating:
             break
@@ -442,6 +458,8 @@ def main():
     all_grad_accuracy = []
     all_grad_empirical = []
     all_grad_true = []
+    all_sa_occupancy = []
+    all_sa_occupancy_true = []
 
     start_time = time.time()
     global_step = 0
@@ -455,13 +473,16 @@ def main():
     # grad_true = np.load('gridworld_scripts/data/grad_true.npy')
     # adv_true = np.load('gridworld_scripts/data/adv_true.npy')
 
-    env = gym.make(args.env_id, **args.env_kwargs)
-    obs, actions, sa = simulate(env, num_episodes=10000)
+    # env = gym.make(args.env_id, **args.env_kwargs)
+    # obs, actions, sa = simulate(env, num_episodes=10000)
 
-    sa_occupancy_true = sa / sa.sum()
-    adv_true, q_true, v_true = value_iteration(env, 100)
-    pi = np.ones(shape=(25, 4))*0.25
-    grad_true = compute_gradient(env, pi, obs, actions, adv_true)
+    # sa_occupancy_true = sa / sa.sum()
+    # adv_true, q_true, v_true = value_iteration(env, 100)
+    # pi = np.ones(shape=(25, 4))*0.25
+    # grad_true = compute_gradient(env, pi, obs, actions, adv_true)
+    sa_occupancy_true = np.load('../gridworld_scripts/data/GridWorld-5x5-v0/sa_occupancy_true.npy')
+    grad_true = np.load('../gridworld_scripts/data/GridWorld-5x5-v0/grad_true.npy')
+    adv_true = np.load('../gridworld_scripts/data/GridWorld-5x5-v0/adv_true.npy')
 
     grad_true_norm = np.linalg.norm(grad_true)
 
@@ -636,12 +657,17 @@ def main():
             all_grad_empirical.append(grad_empirical)
             all_grad_true.append(grad_true)
 
+            print(grad_empirical.shape)
+
             grad_accuracy = (grad_empirical @ grad_true)/np.linalg.norm(grad_empirical)/grad_true_norm
             all_grad_accuracy.append(grad_accuracy.item())
 
             sa_occupancy = sa_counts/sa_counts.sum()
+            # se = (sa_occupancy - sa_occupancy_true).sum()
             se = np.abs(sa_occupancy - sa_occupancy_true).sum()
             all_se.append(se)
+            all_sa_occupancy.append(sa_occupancy)
+            all_sa_occupancy_true.append(sa_occupancy_true)
 
             # save stats
             if args.log_stats:
@@ -660,11 +686,13 @@ def main():
                 timesteps=timesteps,
                 returns=eval_module.evaluations_returns,
                 successes=eval_module.evaluations_successes,
-                sa_counts=all_sa_counts,
+                # sa_counts=all_sa_counts,
+                sa_occupancy=all_sa_occupancy,
+                sa_occupancy_true=all_sa_occupancy_true,
                 # pi=all_pi,
                 se=all_se,
                 grad_accuracy=all_grad_accuracy,
-                grad_empirical=all_grad_empirical,
+                grad=all_grad_empirical,
                 grad_true=all_grad_true,
                 **ppo_logs,
                 **props_logs,
