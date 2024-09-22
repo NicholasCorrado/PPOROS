@@ -5,4 +5,5 @@ from custom_envs.envs.bandit import BanditEnv
 from custom_envs.envs.bandit import SillyBanditEnv
 from custom_envs.envs.discrete2d import Discrete2DEnv
 from custom_envs.envs.gridworld import GridWorldEnv
+from custom_envs.envs.gridworld_1d import GridWorld1DEnv
 from custom_envs.envs.gridworld import GridWorldCliffEnv
