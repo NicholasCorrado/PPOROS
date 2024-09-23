@@ -1,7 +1,9 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
+import copy
 import os
 import random
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 
 import gymnasium as gym
@@ -10,74 +12,68 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import tyro as tyro
+import yaml
 
 import custom_envs
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
+from PROPS.utils import get_latest_run_id
 
 @dataclass
 class Args:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
-    """the name of this experiment"""
-    seed: int = 1
-    """seed of the experiment"""
+    seed: int = None
     torch_deterministic: bool = True
-    """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = True
-    """if toggled, cuda will be enabled by default"""
     track: bool = False
-    """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "cleanRL"
-    """the wandb's project name"""
     wandb_entity: str = None
-    """the entity (team) of wandb's project"""
     capture_video: bool = False
-    """whether to capture videos of the agent performances (check out `videos` folder)"""
+
+    # Logging
+    output_rootdir: str = 'results'
+    output_subdir: str = ''
+    run_id: int = None
+
+
+    # Evaluation
+    eval_freq: int = 1000
+    eval_episodes: int = 100
+
+    # Architecture arguments
+    linear: bool = True
+    
+    # Learning algorithm
+    algo: str = 'ppo'
+    
+    # Sampling algorithm
+    sampling_algo: str = 'on_policy'
+    
 
     # Algorithm specific arguments
     env_id: str = "GridWorld1D-10-v0"
-    """the id of the environment"""
     total_timesteps: int = 500000
-    """total timesteps of the experiments"""
-    learning_rate: float = 2.5e-4
-    """the learning rate of the optimizer"""
-    num_envs: int = 4
-    """the number of parallel game environments"""
+    learning_rate: float = 2.5e-2
+    num_envs: int = 1
     num_steps: int = 128
-    """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = True
-    """Toggle learning rate annealing for policy and value networks"""
     gamma: float = 0.99
-    """the discount factor gamma"""
     gae_lambda: float = 0.95
-    """the lambda for the general advantage estimation"""
-    num_minibatches: int = 4
-    """the number of mini-batches"""
-    update_epochs: int = 4
-    """the K epochs to update the policy"""
+    num_minibatches: int = 1
+    update_epochs: int = 1
     norm_adv: bool = True
-    """Toggles advantages normalization"""
-    clip_coef: float = 0.2
-    """the surrogate clipping coefficient"""
+    clip_coef: float = 9999999999
     clip_vloss: bool = True
-    """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
     ent_coef: float = 0.01
-    """coefficient of the entropy"""
     vf_coef: float = 0.5
-    """coefficient of the value function"""
     max_grad_norm: float = 0.5
-    """the maximum norm for the gradient clipping"""
     target_kl: float = None
-    """the target KL divergence threshold"""
 
     # to be filled in runtime
     batch_size: int = 0
-    """the batch size (computed in runtime)"""
     minibatch_size: int = 0
-    """the mini-batch size (computed in runtime)"""
     num_iterations: int = 0
-    """the number of iterations (computed in runtime)"""
 
 
 def make_env(env_id, idx, capture_video, run_name):
@@ -100,7 +96,7 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 
 
 class Agent(nn.Module):
-    def __init__(self, envs):
+    def __init__(self, envs, linear):
         super().__init__()
         self.critic = nn.Sequential(
             layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
@@ -117,6 +113,14 @@ class Agent(nn.Module):
             layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
         )
 
+        if linear:
+            self.critic = nn.Sequential(
+                layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 1), std=0),
+            )
+            self.actor = nn.Sequential(
+                layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), envs.single_action_space.n), std=0),
+            )
+
     def get_value(self, x):
         return self.critic(x)
 
@@ -127,12 +131,92 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
+    def get_action(self, x, action=None):
+        logits = self.actor(x)
+        probs = Categorical(logits=logits)
+        if action is None:
+            action = probs.sample()
+        return action, probs.log_prob(action), probs.entropy()
 
-if __name__ == "__main__":
+
+
+def simulate(env, actor, eval_episodes):
+    logs = defaultdict(list)
+
+    for episode_i in range(eval_episodes):
+        logs_episode = defaultdict(list)
+
+        obs, _ = env.reset()
+        done = False
+
+        while not done:
+            # ALGO LOGIC: put action logic here
+            with torch.no_grad():
+                actions, _, _ = actor.get_action(torch.Tensor(obs).to('cpu'))
+                actions = actions.cpu().numpy()
+
+            # TRY NOT TO MODIFY: execute the game and log data.
+            next_obs, rewards, terminateds, truncateds, infos = env.step(actions)
+            done = terminateds[0] or truncateds[0]
+
+            # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
+            obs = next_obs
+
+            logs_episode['rewards'].append(rewards[0])
+            try:
+                logs_episode['is_success'].append(infos['is_success'])
+            except:
+                logs_episode['is_success'].append(False)
+
+
+        # eval_returns.append(discounted_return)
+        logs['returns'].append(np.sum(logs_episode['rewards']))
+        logs['successes'].append(np.sum(logs_episode['is_success']))
+
+    return_avg = np.mean(logs['returns'])
+    return_std = np.std(logs['returns'])
+    success_avg = np.mean(logs['successes'])
+    success_std = np.std(logs['successes'])
+    return return_avg, return_std, success_avg, success_std
+    # return np.array(eval_returns), np.array(eval_obs), np.array(eval_actions), np.array(eval_rewards), sa_counts
+
+
+def run():
     args = tyro.cli(Args)
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
+
+    ### Seeding
+    if args.seed is None:
+        if args.run_id:
+            args.seed = np.random.randint(args.run_id)
+        else:
+            args.seed = np.random.randint(2 ** 32 - 1)
+
+    ### Override hyperparameters based on sampling method
+    assert args.sampling_algo in ['on_policy', 'ros', 'props', 'oracle_adaptive']
+    if args.algo == 'ros':
+        args.props_num_steps = 1
+        args.props_update_epochs = 1
+        args.props_clip_coef = 9999999
+        args.props_target_kl = 9999999
+        args.props_lambda = 0
+
+    ### Output path
+    args.output_dir = f"{args.output_rootdir}/{args.env_id}/{args.algo}_{args.sampling_algo}/{args.output_subdir}"
+    if args.run_id is not None:
+        args.output_dir += f"/run_{args.run_id}"
+    else:
+        run_id = get_latest_run_id(save_dir=args.output_dir) + 1
+        args.output_dir += f"/run_{run_id}"
+
+    ### Dump training config to save dir
+    os.makedirs(args.output_dir, exist_ok=True)
+    with open(os.path.join(args.output_dir, "config.yml"), "w") as f:
+        yaml.dump(args, f, sort_keys=True)
+
+    ### wandb
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
         import wandb
@@ -164,10 +248,16 @@ if __name__ == "__main__":
     envs = gym.vector.SyncVectorEnv(
         [make_env(args.env_id, i, args.capture_video, run_name) for i in range(args.num_envs)],
     )
+    envs_eval = gym.vector.SyncVectorEnv(
+        [make_env(args.env_id, i, args.capture_video, run_name) for i in range(args.num_envs)],
+    )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    agent = Agent(envs).to(device)
+    agent = Agent(envs, args.linear).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+
+    ### Logging
+    logs = defaultdict(list)
 
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
@@ -212,7 +302,7 @@ if __name__ == "__main__":
             if "final_info" in infos:
                 for info in infos["final_info"]:
                     if info and "episode" in info:
-                        print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
+                        # print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
                         writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                         writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
@@ -307,8 +397,27 @@ if __name__ == "__main__":
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
-        print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+        if args.eval_freq is not None:
+
+            return_avg, return_std, success_avg, success_std = simulate(env=envs_eval, actor=agent, eval_episodes=args.eval_episodes)
+            logs['timestep'].append(global_step)
+            logs['return'].append(return_avg)
+            logs['success_rate'].append(success_avg)
+
+            print(f"Eval num_timesteps={global_step}, " f"episode_return={return_avg:.2f} +/- {return_std:.2f}")
+            print(f"Eval num_timesteps={global_step}, " f"episode_success={success_avg:.2f} +/- {success_std:.2f}")
+            print()
+
+            np.savez(
+                f'{args.output_dir}/evaluations.npz',
+                **logs,
+            )
+
 
     envs.close()
     writer.close()
+
+if __name__ == "__main__":
+    run()
