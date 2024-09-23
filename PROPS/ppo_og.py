@@ -52,11 +52,11 @@ class Args:
     
 
     # Algorithm specific arguments
-    env_id: str = "GridWorld1D-10-v0"
+    env_id: str = "GridWorld-5x5-v0"
     total_timesteps: int = 500000
     learning_rate: float = 2.5e-2
     num_envs: int = 1
-    num_steps: int = 128
+    num_steps: int = 64
     anneal_lr: bool = True
     gamma: float = 0.99
     gae_lambda: float = 0.95
@@ -157,21 +157,20 @@ def simulate(env, actor, eval_episodes):
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, rewards, terminateds, truncateds, infos = env.step(actions)
-            done = terminateds[0] or truncateds[0]
+            done = terminateds or truncateds
 
             # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
             obs = next_obs
 
-            logs_episode['rewards'].append(rewards[0])
-            try:
-                logs_episode['is_success'].append(infos['is_success'])
-            except:
-                logs_episode['is_success'].append(False)
+            logs_episode['rewards'].append(rewards)
 
 
-        # eval_returns.append(discounted_return)
         logs['returns'].append(np.sum(logs_episode['rewards']))
-        logs['successes'].append(np.sum(logs_episode['is_success']))
+        try:
+            logs['successes'].append(infos['is_success'])
+        except:
+            logs['successes'].append(False)
+
 
     return_avg = np.mean(logs['returns'])
     return_std = np.std(logs['returns'])
@@ -248,9 +247,10 @@ def run():
     envs = gym.vector.SyncVectorEnv(
         [make_env(args.env_id, i, args.capture_video, run_name) for i in range(args.num_envs)],
     )
-    envs_eval = gym.vector.SyncVectorEnv(
+    env_eval = gym.vector.SyncVectorEnv(
         [make_env(args.env_id, i, args.capture_video, run_name) for i in range(args.num_envs)],
-    )
+    ).envs[0]
+
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
     agent = Agent(envs, args.linear).to(device)
@@ -401,7 +401,7 @@ def run():
 
         if args.eval_freq is not None:
 
-            return_avg, return_std, success_avg, success_std = simulate(env=envs_eval, actor=agent, eval_episodes=args.eval_episodes)
+            return_avg, return_std, success_avg, success_std = simulate(env=env_eval, actor=agent, eval_episodes=args.eval_episodes)
             logs['timestep'].append(global_step)
             logs['return'].append(return_avg)
             logs['success_rate'].append(success_avg)
