@@ -20,10 +20,10 @@ from torch.utils.tensorboard import SummaryWriter
 
 from PROPS.utils import get_latest_run_id
 
+
 @dataclass
 class Args:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
-    seed: int = None
     torch_deterministic: bool = True
     cuda: bool = True
     track: bool = False
@@ -35,29 +35,29 @@ class Args:
     output_rootdir: str = 'results'
     output_subdir: str = ''
     run_id: int = None
-
+    seed: int = 0
+    total_timesteps: int = 50000
 
     # Evaluation
-    eval_freq: int = 1000
+    eval_freq: int = 10
     eval_episodes: int = 100
 
     # Architecture arguments
-    linear: bool = True
-    
+    linear: int = 1
+
     # Learning algorithm
     algo: str = 'ppo'
-    
+
     # Sampling algorithm
+    # sampling_algo: str = 'props'
     sampling_algo: str = 'on_policy'
-    
 
     # Algorithm specific arguments
     env_id: str = "GridWorld-5x5-v0"
-    total_timesteps: int = 500000
-    learning_rate: float = 2.5e-2
+    learning_rate: float = 1e-2
     num_envs: int = 1
-    num_steps: int = 64
-    anneal_lr: bool = True
+    num_steps: int = 128
+    anneal_lr: bool = False
     gamma: float = 0.99
     gae_lambda: float = 0.95
     num_minibatches: int = 1
@@ -69,6 +69,15 @@ class Args:
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
     target_kl: float = None
+
+    # Behavior
+    props_num_steps: int = 16
+    props_learning_rate: float = 1e-3
+    props_update_epochs: int = 4
+    props_num_minibatches: int = 4
+    props_clip_coef: float = 0.3
+    props_target_kl: float = 0.03
+    props_lambda: float = 0.1
 
     # to be filled in runtime
     batch_size: int = 0
@@ -118,7 +127,8 @@ class Agent(nn.Module):
                 layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 1), std=0),
             )
             self.actor = nn.Sequential(
-                layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), envs.single_action_space.n), std=0),
+                layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), envs.single_action_space.n),
+                           std=0),
             )
 
     def get_value(self, x):
@@ -137,7 +147,6 @@ class Agent(nn.Module):
         if action is None:
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy()
-
 
 
 def simulate(env, actor, eval_episodes):
@@ -164,13 +173,11 @@ def simulate(env, actor, eval_episodes):
 
             logs_episode['rewards'].append(rewards)
 
-
         logs['returns'].append(np.sum(logs_episode['rewards']))
         try:
             logs['successes'].append(infos['is_success'])
         except:
             logs['successes'].append(False)
-
 
     return_avg = np.mean(logs['returns'])
     return_std = np.std(logs['returns'])
@@ -185,6 +192,12 @@ def run():
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
+
+    args.props_batch_size = int(args.num_envs * args.props_num_steps)
+    args.props_minibatch_size = int(args.props_batch_size // args.props_num_minibatches)
+    props_iterations_per_target_update = args.num_steps // args.props_num_steps
+
+    if args.sampling_algo != 'on_policy': assert args.num_steps % args.props_num_steps == 0
 
     ### Seeding
     if args.seed is None:
@@ -229,11 +242,11 @@ def run():
             monitor_gym=True,
             save_code=True,
         )
-    writer = SummaryWriter(f"runs/{run_name}")
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
+    # writer = SummaryWriter(f"runs/{run_name}")
+    # writer.add_text(
+    #     "hyperparameters",
+    #     "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+    # )
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -256,8 +269,14 @@ def run():
     agent = Agent(envs, args.linear).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
+    agent_props = copy.deepcopy(agent)
+    optimizer_props = optim.Adam(agent_props.parameters(), lr=args.learning_rate, eps=1e-5)
+
     ### Logging
     logs = defaultdict(list)
+    target_update_count = 0
+    behavior_update_count = 0
+
 
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
@@ -288,7 +307,11 @@ def run():
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs)
+                if args.sampling_algo in ['props', 'ros']:
+                    action, _, _, _ = agent_props.get_action_and_value(next_obs)
+                    action, logprob, _, value = agent.get_action_and_value(next_obs, action=action)
+                else:
+                    action, logprob, _, value = agent.get_action_and_value(next_obs)
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
@@ -299,12 +322,69 @@ def run():
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
 
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
+            # if "final_info" in infos:
+            #     for info in infos["final_info"]:
+            #         if info and "episode" in info:
                         # print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                        writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                        writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+                        # writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
+                        # writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+
+            ################################## START BEHAVIOR UPDATE ##################################
+
+            if args.sampling_algo == 'props' and global_step % args.props_num_steps == 0:
+                # behavior_update += 1
+
+                ### Flatten the batch
+                b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
+                b_logprobs = logprobs.reshape(-1)
+                b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
+
+                # @TODO: fix when you add historic data
+                if global_step < args.num_steps:
+                    b_obs = b_obs[:global_step]
+                    b_logprobs = b_logprobs[:global_step]
+                    b_actions = b_actions[:global_step]
+
+                ### Set props policy equal to current target policy
+                for source_param, dump_param in zip(agent_props.parameters(), agent.parameters()):
+                    source_param.data.copy_(dump_param.data)
+
+                b_inds = np.arange(args.props_batch_size)
+                clipfracs = []
+                for epoch in range(args.props_update_epochs):
+                    np.random.shuffle(b_inds)
+                    for start in range(0, args.batch_size, args.minibatch_size):
+                        end = start + args.minibatch_size
+                        mb_inds = b_inds[start:end]
+
+                        _, newlogprob, entropy, newvalue = agent_props.get_action_and_value(b_obs[mb_inds],
+                                                                                      b_actions.long()[mb_inds])
+                        logratio = newlogprob - b_logprobs[mb_inds]
+                        ratio = logratio.exp()
+
+                        with torch.no_grad():
+                            # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                            old_approx_kl = (-logratio).mean()
+                            approx_kl = ((ratio - 1) - logratio).mean()
+                            clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+
+                        # @TODO: add KL regularization
+                        mb_advantages = -1
+
+                        # Policy loss
+                        pg_loss1 = -mb_advantages * ratio
+                        pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                        pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                        loss = pg_loss
+
+                        optimizer_props.zero_grad()
+                        loss.backward()
+                        nn.utils.clip_grad_norm_(agent_props.parameters(), args.max_grad_norm)
+                        optimizer_props.step()
+
+                    if args.props_target_kl is not None and approx_kl > args.props_target_kl:
+                        break
+        ################################## END BEHAVIOR UPDATE ##################################
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -322,7 +402,7 @@ def run():
                 advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-        # flatten the batch
+        ### Flatten the batch
         b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
         b_logprobs = logprobs.reshape(-1)
         b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
@@ -330,7 +410,9 @@ def run():
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
 
-        # Optimizing the policy and value network
+        ### Target policy (and value network) update
+        target_update_count += 1
+
         b_inds = np.arange(args.batch_size)
         clipfracs = []
         for epoch in range(args.update_epochs):
@@ -389,22 +471,26 @@ def run():
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-        writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-        writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-        writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-        writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-        writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-        writer.add_scalar("losses/explained_variance", explained_var, global_step)
-        writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        # writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+        # writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
+        # writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
+        # writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
+        # writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
+        # writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
+        # writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
+        # writer.add_scalar("losses/explained_variance", explained_var, global_step)
+        # writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-        if args.eval_freq is not None:
+        ################################## END TARGET UPDATE ##################################
 
-            return_avg, return_std, success_avg, success_std = simulate(env=env_eval, actor=agent, eval_episodes=args.eval_episodes)
+
+        if global_step % args.eval_freq == 0:
+            return_avg, return_std, success_avg, success_std = simulate(env=env_eval, actor=agent,
+                                                                        eval_episodes=args.eval_episodes)
             logs['timestep'].append(global_step)
             logs['return'].append(return_avg)
             logs['success_rate'].append(success_avg)
+            logs['target_update'].append(target_update_count)
 
             print(f"Eval num_timesteps={global_step}, " f"episode_return={return_avg:.2f} +/- {return_std:.2f}")
             print(f"Eval num_timesteps={global_step}, " f"episode_success={success_avg:.2f} +/- {success_std:.2f}")
@@ -415,9 +501,9 @@ def run():
                 **logs,
             )
 
-
     envs.close()
-    writer.close()
+    # writer.close()
+
 
 if __name__ == "__main__":
     run()

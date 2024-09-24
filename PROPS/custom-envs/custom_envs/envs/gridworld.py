@@ -19,9 +19,12 @@ class GridWorldEnv(gym.Env):
         self.rewards = rewards[0] * np.ones(shape=self.shape)
         self.rewards[0, 0] = rewards[1] # subopt
         self.rewards[self.nrows-1, self.ncols-1] = rewards[2]
+        # self.rewards[:3, :3] = 0.1
+        self.opt_reward = rewards[2]
 
         self.terminals = np.zeros(shape=self.shape, dtype=bool)
         self.terminals[self.rewards > 0] = True
+        # self.terminals[self.rewards > 0.02] = True
 
         print(self.rewards)
         print(self.terminals)
@@ -53,7 +56,7 @@ class GridWorldEnv(gym.Env):
         reward = self.rewards[self.rowcol[0], self.rowcol[1]]
         terminated = self.terminals[self.rowcol[0], self.rowcol[1]]
         truncated = False
-        info = {}
+        info = {'is_success': reward == self.opt_reward}
 
         return state, reward, terminated, truncated, info
 
@@ -67,6 +70,32 @@ class GridWorldEnv(gym.Env):
         state = self._rowcol_to_obs(self.rowcol)
 
         return state, {}
+
+
+class GridWorld2Env(GridWorldEnv):
+    def __init__(self, shape=(5,5), rewards=(-0.01, 0.1, 1)):
+        super().__init__(shape, rewards)
+
+        self.shape = np.array(shape)
+        self.action_space = gym.spaces.Discrete(4)
+        self.observation_space = gym.spaces.Box(low=0, high=1, shape=(np.product(self.shape),))
+
+        self.nrows, self.ncols = self.shape
+        self.rowcol = (self.shape-1)/2
+        self.init_rowcol = (self.shape-1)/2 # agent starts in middle of the grid.
+
+        self.rewards = rewards[0] * np.ones(shape=self.shape)
+        self.rewards[:3, :3] = 0.01
+        self.rewards[2, 2] = rewards[0]
+        self.rewards[0, 0] = rewards[1] # subopt
+        self.rewards[self.nrows-1, self.ncols-1] = rewards[2]
+
+
+        self.terminals = np.zeros(shape=self.shape, dtype=bool)
+        self.terminals[self.rewards > 0.1] = True
+
+        print(self.rewards)
+        print(self.terminals)
 
 
 class GridWorldContinuingEnv(GridWorldEnv):

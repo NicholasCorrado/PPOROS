@@ -5,7 +5,7 @@ import numpy as np
 
 
 class GridWorld1DEnv(gym.Env):
-    def __init__(self, n=10, rewards=(-0.01, 0.5, 1)):
+    def __init__(self, n=7, rewards=(-0.01, 0.8, 1)):
         super().__init__()
 
         self.n = n
@@ -17,11 +17,13 @@ class GridWorld1DEnv(gym.Env):
         self.init_pos = n//2  # agent starts in middle of the grid.
 
         self.rewards = rewards[0] * np.ones(self.n)
+        self.rewards[:self.init_pos] = 0.01
         self.rewards[0] = rewards[1] # subopt
         self.rewards[-1] = rewards[2] # opt
+        self.opt_reward = rewards[2]
 
         self.terminals = np.zeros(self.n, dtype=bool)
-        self.terminals[self.rewards > 0] = True
+        self.terminals[self.rewards > 0.01] = True
 
         print(self.rewards)
         print(self.terminals)
@@ -43,7 +45,7 @@ class GridWorld1DEnv(gym.Env):
         reward = self.rewards[self.pos]
         terminated = self.terminals[self.pos]
         truncated = False
-        info = {}
+        info = {'is_success': reward == self.opt_reward}
 
         return state, reward, terminated, truncated, info
 
@@ -56,5 +58,6 @@ class GridWorld1DEnv(gym.Env):
         self.pos = self.init_pos
         state = np.zeros(self.n)
         state[self.pos] = 1
+        # print(self.pos)
 
         return state, {}
