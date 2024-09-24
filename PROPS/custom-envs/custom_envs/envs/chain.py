@@ -5,19 +5,19 @@ import numpy as np
 
 
 class ChainEnv(gym.Env):
-    def __init__(self, n=7, rewards=(-0.01, 0.8, 1)):
+    def __init__(self, n=7, rewards=(-0.01, 5, 10)):
         super().__init__()
 
         self.n = n
         self.shape = (1, n)
         self.action_space = gym.spaces.Discrete(2)
-        self.observation_space = gym.spaces.Box(low=0, high=1, shape=(np.product(self.n),))
+        self.observation_space = gym.spaces.Box(low=0, high=1, shape=(self.n,))
 
         self.pos = n//2
         self.init_pos = n//2  # agent starts in middle of the grid.
 
         self.rewards = rewards[0] * np.ones(self.n)
-        # self.rewards[:self.init_pos] = 0.01
+        self.rewards[:self.init_pos] = 0.01
         self.rewards[0] = rewards[1] # subopt
         self.rewards[-1] = rewards[2] # opt
         self.opt_reward = rewards[2]
