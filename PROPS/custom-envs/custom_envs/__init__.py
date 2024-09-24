@@ -100,7 +100,7 @@ for l in [3, 4, 5]:
         },
     )
 
-for l in [5, 10, 20]:
+for l in [3, 5, 7, 9, 11, 10, 20]:
     register(
         id=f"GridWorld-{l}x{l}-v0",
         entry_point="custom_envs.envs:GridWorldEnv",
@@ -120,8 +120,11 @@ for l in [5, 10, 20]:
     )
 
     register(
-        id=f"GridWorld1D-{l}-v0",
-        entry_point="custom_envs.envs.gridworld_1d:GridWorld1DEnv",
+        id=f"Chain-{l}-v0",
+        entry_point="custom_envs.envs.chain:ChainEnv",
         max_episode_steps=l,
+        kwargs={
+            'n': l
+        }
     )
 

@@ -148,6 +148,12 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy()
 
+    def get_pi_at_s(self, x):
+        with torch.no_grad():
+            logits = self.actor(x)
+            probs = Categorical(logits=logits).probs.detach().numpy()
+        return probs
+
 
 def simulate(env, actor, eval_episodes):
     logs = defaultdict(list)
@@ -197,7 +203,8 @@ def run():
     args.props_minibatch_size = int(args.props_batch_size // args.props_num_minibatches)
     props_iterations_per_target_update = args.num_steps // args.props_num_steps
 
-    if args.sampling_algo != 'on_policy': assert args.num_steps % args.props_num_steps == 0
+    if args.sampling_algo in ['props', 'ros']:
+        assert args.num_steps % args.props_num_steps == 0
 
     ### Seeding
     if args.seed is None:
@@ -277,7 +284,6 @@ def run():
     target_update_count = 0
     behavior_update_count = 0
 
-
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
     actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
@@ -285,6 +291,11 @@ def run():
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
     values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+
+    ### Oracle adaptive sampling setup
+    sa_counts = np.zeros(shape=(envs.single_observation_space.shape[-1], envs.single_action_space.n))
+    possible_actions = np.arange(envs.single_action_space.n)
+
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -310,6 +321,20 @@ def run():
                 if args.sampling_algo in ['props', 'ros']:
                     action, _, _, _ = agent_props.get_action_and_value(next_obs)
                     action, logprob, _, value = agent.get_action_and_value(next_obs, action=action)
+                elif args.sampling_algo == 'oracle_adaptive':
+                    s_idx = np.argmax(next_obs)
+                    sa = sa_counts[s_idx]
+                    pi = agent.get_pi_at_s(next_obs)[0]
+
+                    if np.sum(sa) == 0:
+                        a_idx = np.random.choice(possible_actions, p=pi)
+                    else:
+                        pi_empirical = sa / np.sum(sa)
+                        a_idx = np.argmin(pi_empirical - agent.get_pi_at_s(next_obs))
+
+                    action = torch.Tensor([a_idx])
+                    _, logprob, _, value = agent.get_action_and_value(next_obs, action)
+
                 else:
                     action, logprob, _, value = agent.get_action_and_value(next_obs)
                 values[step] = value.flatten()

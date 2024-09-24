@@ -4,7 +4,7 @@ import gymnasium as gym
 import numpy as np
 
 
-class GridWorld1DEnv(gym.Env):
+class ChainEnv(gym.Env):
     def __init__(self, n=7, rewards=(-0.01, 0.8, 1)):
         super().__init__()
 
@@ -17,7 +17,7 @@ class GridWorld1DEnv(gym.Env):
         self.init_pos = n//2  # agent starts in middle of the grid.
 
         self.rewards = rewards[0] * np.ones(self.n)
-        self.rewards[:self.init_pos] = 0.01
+        # self.rewards[:self.init_pos] = 0.01
         self.rewards[0] = rewards[1] # subopt
         self.rewards[-1] = rewards[2] # opt
         self.opt_reward = rewards[2]
