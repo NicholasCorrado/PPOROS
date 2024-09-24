@@ -54,21 +54,21 @@ class Args:
 
     # Algorithm specific arguments
     env_id: str = "GridWorld-5x5-v0"
-    learning_rate: float = 1e-2
+    learning_rate: float = 1e-3
     num_envs: int = 1
     num_steps: int = 128
     anneal_lr: bool = False
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    num_minibatches: int = 1
-    update_epochs: int = 1
+    num_minibatches: int = 4
+    update_epochs: int = 4
     norm_adv: bool = True
-    clip_coef: float = 9999999999
+    clip_coef: float = 0.2
     clip_vloss: bool = True
     ent_coef: float = 0.01
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
-    target_kl: float = None
+    target_kl: float = 0.1
 
     # Behavior
     props_num_steps: int = 16
