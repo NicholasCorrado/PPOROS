@@ -122,6 +122,6 @@ for l in [5, 10, 20]:
     register(
         id=f"GridWorld1D-{l}-v0",
         entry_point="custom_envs.envs.gridworld_1d:GridWorld1DEnv",
-        max_episode_steps=4*l,
+        max_episode_steps=l,
     )
 
