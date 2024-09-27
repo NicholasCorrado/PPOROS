@@ -43,14 +43,14 @@ class Args:
     eval_episodes: int = 100
 
     # Architecture arguments
-    linear: int = 1
+    linear: int = 0
 
     # Learning algorithm
     algo: str = 'ppo'
 
     # Sampling algorithm
-    # sampling_algo: str = 'props'
-    sampling_algo: str = 'on_policy'
+    sampling_algo: str = 'props'
+    # sampling_algo: str = 'on_policy'
 
     # Algorithm specific arguments
     env_id: str = "GridWorld-5x5-v0"
@@ -277,7 +277,7 @@ def run():
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     agent_props = copy.deepcopy(agent)
-    optimizer_props = optim.Adam(agent_props.parameters(), lr=args.learning_rate, eps=1e-5)
+    optimizer_props = optim.Adam(agent_props.parameters(), lr=args.props_learning_rate, eps=1e-5)
 
     ### Logging
     logs = defaultdict(list)
@@ -320,7 +320,20 @@ def run():
             with torch.no_grad():
                 if args.sampling_algo in ['props', 'ros']:
                     action, _, _, _ = agent_props.get_action_and_value(next_obs)
-                    action, logprob, _, value = agent.get_action_and_value(next_obs, action=action)
+                    _, logprob, _, value = agent.get_action_and_value(next_obs, action=action)
+                elif args.sampling_algo == 'greedy_adaptive':
+                    s_idx = np.argmax(next_obs)
+                    sa = sa_counts[s_idx]
+                    pi = agent.get_pi_at_s(next_obs)[0]
+
+                    if np.sum(sa) == 0:
+                        a_idx = np.random.choice(possible_actions, p=pi)
+                    else:
+                        pi_empirical = sa / np.sum(sa)
+                        a_idx = np.argmin(pi_empirical - agent.get_pi_at_s(next_obs))
+
+                    action = torch.Tensor([a_idx])
+                    _, logprob, _, value = agent.get_action_and_value(next_obs, action)
                 elif args.sampling_algo == 'oracle_adaptive':
                     s_idx = np.argmax(next_obs)
                     sa = sa_counts[s_idx]
@@ -366,6 +379,7 @@ def run():
 
                 # @TODO: fix when you add historic data
                 if global_step < args.num_steps:
+                    continue
                     b_obs = b_obs[:global_step]
                     b_logprobs = b_logprobs[:global_step]
                     b_actions = b_actions[:global_step]
@@ -378,8 +392,8 @@ def run():
                 clipfracs = []
                 for epoch in range(args.props_update_epochs):
                     np.random.shuffle(b_inds)
-                    for start in range(0, args.batch_size, args.minibatch_size):
-                        end = start + args.minibatch_size
+                    for start in range(0, args.props_batch_size, args.props_minibatch_size):
+                        end = start + args.props_minibatch_size
                         mb_inds = b_inds[start:end]
 
                         _, newlogprob, entropy, newvalue = agent_props.get_action_and_value(b_obs[mb_inds],
