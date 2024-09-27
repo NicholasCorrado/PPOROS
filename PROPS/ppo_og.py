@@ -39,8 +39,9 @@ class Args:
     total_timesteps: int = 50000
 
     # Evaluation
-    eval_freq: int = 10
-    eval_episodes: int = 100
+    eval_freq: int = 10000
+    eval_episodes: int = 0
+    se_freq: int = 1
 
     # Architecture arguments
     linear: int = 0
@@ -49,12 +50,12 @@ class Args:
     algo: str = 'ppo'
 
     # Sampling algorithm
-    sampling_algo: str = 'props'
-    # sampling_algo: str = 'on_policy'
+    # sampling_algo: str = 'props'
+    sampling_algo: str = 'on_policy'
 
     # Algorithm specific arguments
     env_id: str = "GridWorld-5x5-v0"
-    learning_rate: float = 1e-3
+    learning_rate: float = 0
     num_envs: int = 1
     num_steps: int = 128
     anneal_lr: bool = False
@@ -69,6 +70,7 @@ class Args:
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
     target_kl: float = 0.1
+    buffer_size: int = 1000
 
     # Behavior
     props_num_steps: int = 16
@@ -193,6 +195,77 @@ def simulate(env, actor, eval_episodes):
     # return np.array(eval_returns), np.array(eval_obs), np.array(eval_actions), np.array(eval_rewards), sa_counts
 
 
+
+def compute_se(args, agent, agent_props, obs, actions, global_step, envs):
+    # COMPUTE SAMPLING ERROR
+
+    # Initialize empirical policy equal to the current PPO policy.
+    agent_mle = copy.deepcopy(agent)
+    agent_mle = Agent(envs, linear=False)
+
+    # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
+    # params = [p for p in agent_mle.actor_mean.parameters()]
+    # params[0].requires_grad = False
+    # params[2].requires_grad = False
+
+    optimizer_mle = optim.Adam(agent_mle.parameters(), lr=1e-3)
+    obs_dim = obs.shape[-1]
+    action_dim = actions.shape[-1]
+    b_obs = obs.reshape(-1, obs_dim).to('cpu')
+    b_actions = actions.reshape(-1).to('cpu')
+
+    if global_step < args.buffer_size * args.num_steps:
+        b_obs = b_obs[:global_step]
+        b_actions = b_actions[:global_step]
+
+
+    n = len(b_obs)
+    b_inds = np.arange(n)
+
+    mb_size = n
+    for epoch in range(300):
+
+        np.random.shuffle(b_inds)
+        for start in range(0, n, mb_size):
+            end = start + mb_size
+            mb_inds = b_inds[start:end]
+
+            _, logprobs_mle, _ = agent_mle.get_action(b_obs[mb_inds], b_actions[mb_inds])
+            loss = -torch.mean(logprobs_mle)
+
+            optimizer_mle.zero_grad()
+            loss.backward()
+            grad_norm = nn.utils.clip_grad_norm_(agent_mle.parameters(), 0.5, norm_type=2)
+            optimizer_mle.step()
+            # print(grad_norm)
+            # if grad_norm < 1e-5:
+            #     print('break')
+            #     break
+
+            # print((logprobs_mle - logprobs_target).mean())
+        # if (epoch+1) % 100 == 0:
+        #     _, logprobs_mle, _ = agent_mle.get_action(b_obs, b_actions)
+        #     _, logprobs_target, ent_target = agent.get_action(b_obs, b_actions)
+        #     _, logprobs_props, ent_props = agent_props.get_action(b_obs, b_actions)
+        #     approx_kl_mle_target = (logprobs_mle - logprobs_target).mean()
+        #     print(epoch, approx_kl_mle_target)
+
+    with torch.no_grad():
+        _, logprobs_mle, _ = agent_mle.get_action(b_obs, b_actions)
+        _, logprobs_target, ent_target = agent.get_action(b_obs, b_actions)
+        # _, logprobs_props, ent_props = agent_props.get_action(b_obs, b_actions)
+
+        # Compute sampling error
+        approx_kl_mle_target = (logprobs_mle - logprobs_target).mean()
+
+        # logs = {}
+        # logs[f'kl_mle_target'].append(approx_kl_mle_target.item())
+        # logs[f'kl_props_target'].append(approx_kl_props_target.item())
+        # logs[f'ent_target'].append(ent_target.mean().item())
+        # logs[f'ent_props'].append(ent_props.mean().item())
+    return approx_kl_mle_target.item()
+
+
 def run():
     args = tyro.cli(Args)
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -281,16 +354,18 @@ def run():
 
     ### Logging
     logs = defaultdict(list)
+    logs_sampling_error = defaultdict(list)
+
     target_update_count = 0
     behavior_update_count = 0
 
     # ALGO Logic: Storage setup
-    obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    obs = torch.zeros((args.buffer_size * args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
+    actions = torch.zeros((args.buffer_size * args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
+    logprobs = torch.zeros((args.buffer_size * args.num_steps, args.num_envs)).to(device)
+    rewards = torch.zeros((args.buffer_size * args.num_steps, args.num_envs)).to(device)
+    dones = torch.zeros((args.buffer_size * args.num_steps, args.num_envs)).to(device)
+    values = torch.zeros((args.buffer_size * args.num_steps, args.num_envs)).to(device)
 
     ### Oracle adaptive sampling setup
     sa_counts = np.zeros(shape=(envs.single_observation_space.shape[-1], envs.single_action_space.n))
@@ -299,6 +374,7 @@ def run():
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
+    buffer_pos = 0
     start_time = time.time()
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(device)
@@ -313,8 +389,8 @@ def run():
 
         for step in range(0, args.num_steps):
             global_step += args.num_envs
-            obs[step] = next_obs
-            dones[step] = next_done
+            obs[buffer_pos] = next_obs
+            dones[buffer_pos] = next_done
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
@@ -350,16 +426,18 @@ def run():
 
                 else:
                     action, logprob, _, value = agent.get_action_and_value(next_obs)
-                values[step] = value.flatten()
-            actions[step] = action
-            logprobs[step] = logprob
+                values[buffer_pos] = value.flatten()
+            actions[buffer_pos] = action
+            logprobs[buffer_pos] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
             next_done = np.logical_or(terminations, truncations)
-            rewards[step] = torch.tensor(reward).to(device).view(-1)
+            rewards[buffer_pos] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
 
+            buffer_pos += 1
+            buffer_pos %= args.buffer_size * args.num_steps
             # if "final_info" in infos:
             #     for info in infos["final_info"]:
             #         if info and "episode" in info:
@@ -449,6 +527,21 @@ def run():
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
 
+        if global_step < args.buffer_size * args.num_steps:
+            b_obs = b_obs[:global_step]
+            b_logprobs = b_logprobs[:global_step]
+            b_actions = b_actions[:global_step]
+            b_advantages = b_advantages[:global_step]
+            b_returns = b_returns[:global_step]
+            b_values = b_values[:global_step]
+        elif args.buffer_size > 1:
+            b_obs = torch.roll(b_obs, args.num_steps)
+            b_logprobs = torch.roll(b_logprobs, args.num_steps)
+            b_actions = torch.roll(b_actions, args.num_steps)
+            b_advantages = torch.roll(b_advantages, args.num_steps)
+            b_returns = torch.roll(b_returns, args.num_steps)
+            b_values = torch.roll(b_values, args.num_steps)
+
         ### Target policy (and value network) update
         target_update_count += 1
 
@@ -523,7 +616,7 @@ def run():
         ################################## END TARGET UPDATE ##################################
 
 
-        if global_step % args.eval_freq == 0:
+        if iteration % args.eval_freq == 0:
             return_avg, return_std, success_avg, success_std = simulate(env=env_eval, actor=agent,
                                                                         eval_episodes=args.eval_episodes)
             logs['timestep'].append(global_step)
@@ -540,8 +633,20 @@ def run():
                 **logs,
             )
 
+        if iteration % args.se_freq == 0:
+            kl_mle_target = compute_se(args, agent, agent_props, obs, actions, global_step, envs)
+            logs_sampling_error['timestep'].append(global_step)
+            logs_sampling_error['sampling_error'].append(kl_mle_target)
+            np.savez(
+                f'{args.output_dir}/sampling_error.npz',
+                **logs_sampling_error,
+            )
+            print(kl_mle_target)
+
     envs.close()
     # writer.close()
+
+
 
 
 if __name__ == "__main__":
