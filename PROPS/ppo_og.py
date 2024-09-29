@@ -42,7 +42,7 @@ class Args:
     # Evaluation
     eval_freq: int = 10
     eval_episodes: int = 20
-    se_freq: int = 1
+    se_freq: int = None
 
     # Architecture arguments
     linear: int = 0
@@ -56,7 +56,7 @@ class Args:
 
     # Algorithm specific arguments
     env_id: str = "Chain-7-v0"
-    learning_rate: float = 0
+    learning_rate: float = 1e-3
     num_envs: int = 1
     num_steps: int = 128
     anneal_lr: bool = False
@@ -71,7 +71,7 @@ class Args:
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
     target_kl: float = 0.03
-    buffer_size: int = 1000
+    buffer_size: int = 1
 
     # Behavior
     props_num_steps: int = 16
@@ -280,6 +280,173 @@ def compute_se(args, agent, agent_props, obs, actions, global_step, envs):
     return approx_kl_mle_target.item()
 
 
+def update_behavior_policy(args, global_step, envs, obs, logprobs, actions, agent_props, agent, optimizer_props):
+    # behavior_update += 1
+
+    ### Flatten the batch
+    b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
+    b_logprobs = logprobs.reshape(-1)
+    b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
+
+    # @TODO: fix when you add historic data
+    if global_step < args.buffer_size * args.num_steps:
+        b_obs = b_obs[:global_step]
+        b_logprobs = b_logprobs[:global_step]
+        b_actions = b_actions[:global_step]
+
+    ### Set props policy equal to current target policy
+    for source_param, dump_param in zip(agent_props.parameters(), agent.parameters()):
+        source_param.data.copy_(dump_param.data)
+    # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
+    # params = [p for p in agent_props.actor.parameters()]
+    # for p in params[:4]:
+    #     p.requires_grad = False
+
+    props_batch_size = len(b_obs)
+    props_minibatch_size = max(int(props_batch_size // args.props_num_minibatches), props_batch_size)
+    b_inds = np.arange(props_batch_size)
+    clipfracs = []
+    for epoch in range(args.props_update_epochs):
+        np.random.shuffle(b_inds)
+        for start in range(0, props_batch_size, props_minibatch_size):
+            end = start + props_minibatch_size
+            mb_inds = b_inds[start:end]
+
+            _, newlogprob, entropy, newvalue = agent_props.get_action_and_value(b_obs[mb_inds],
+                                                                                b_actions.long()[mb_inds])
+            logratio = newlogprob - b_logprobs[mb_inds]
+            ratio = logratio.exp()
+
+            with torch.no_grad():
+                # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                old_approx_kl = (-logratio).mean()
+                approx_kl = ((ratio - 1) - logratio).mean()
+                clipfracs += [((ratio - 1.0).abs() > args.props_clip_coef).float().mean().item()]
+
+            # @TODO: add KL regularization
+            mb_advantages = -1
+
+            # Policy loss
+            pg_loss1 = -mb_advantages * ratio
+            pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+            pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+            kl_loss = ((ratio - 1) - logratio).mean()
+
+            loss = pg_loss  # + args.props_lambda * kl_loss
+
+            optimizer_props.zero_grad()
+            loss.backward()
+            # nn.utils.clip_grad_norm_(agent_props.parameters(), args.max_grad_norm)
+            optimizer_props.step()
+
+        if args.props_target_kl is not None and approx_kl > args.props_target_kl:
+            break
+
+
+
+
+def update_behavior_policy2(agent_props, envs, props_optimizer, obs, actions, advantages, global_step, args):
+    # PROPS UPDATE
+
+
+    if global_step <= args.buffer_size - args.props_num_steps:
+        # If the replay buffer is not full, use all data in replay buffer for this update.
+        start = 0
+        end = global_step
+    else:
+        # If the replay buffer is full, exclude the oldest behavior batch from this update; that batch will be evicted
+        # before the next update and thus does not contribute to sampling error.
+        start = args.props_num_steps
+        end = args.buffer_size
+    # flatten the replay buffer data
+    b_obs = obs[start:end].reshape((-1,) + envs.single_observation_space.shape).to(args.device)
+    b_actions = actions[start:end].reshape((-1,) + envs.single_action_space.shape).to(args.device)
+    # b_logits = logits[start:end].reshape(-1)  # action logits for PPO policy
+    with torch.no_grad():
+        _, _, logprobs, _, _ = agent_props.get_action_and_value(b_obs, b_actions)
+    b_logprobs = logprobs.reshape(-1).to(args.device)
+
+    b_probs = torch.exp(logprobs).to(args.device)
+
+    if args.props_adv:
+        b_advantages = advantages[start:end].reshape(-1)
+
+    batch_size = b_obs.shape[0]
+    minibatch_size = min(args.props_minibatch_size, batch_size)
+    b_inds = np.arange(batch_size)
+    clipfracs = []
+
+    done_updating = False
+    num_update_minibatches = 0
+    pg_loss = None
+    kl_regularizer_loss = None
+    approx_kl_to_log = None
+    grad_norms = []
+
+    for epoch in range(args.props_update_epochs):
+        np.random.shuffle(b_inds)
+
+        for start in range(0, batch_size, minibatch_size):
+            end = start + minibatch_size
+            mb_inds = b_inds[start:end]
+            mb_obs = b_obs[mb_inds]
+            mb_actions = b_actions[mb_inds]
+            mb_probs = b_probs[mb_inds]
+            mb_logprobs = b_logprobs[mb_inds]
+
+            if args.props_adv:
+                # Do not zero-center advantages; we need to preserve A(s,a) = 0 for AW-PROPS
+                mb_advantages = b_advantages[mb_inds]
+                mb_advantages = (mb_advantages - 0) / (mb_advantages.std() + 1e-8)
+                mb_abs_advantages = torch.abs(mb_advantages)
+                # print(torch.mean(mb_abs_advantages), torch.std(mb_abs_advantages))
+
+            _, _, props_logprobs, entropy = agent_props.get_action_and_info(mb_obs, mb_actions)
+            props_logratio = props_logprobs - b_logprobs[mb_inds]
+            props_ratio = props_logratio.exp()
+
+            with torch.no_grad():
+                # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                old_approx_kl = (-props_logratio).mean()
+                approx_kl = ((props_ratio - 1) - props_logratio).mean()
+                clipfracs += [((props_ratio - 1.0).abs() > args.props_clip_coef).float().mean().item()]
+
+
+                approx_kl_to_log = approx_kl
+
+            kl_regularizer_loss = (mb_probs*(mb_logprobs - props_logprobs)).mean()
+
+            pg_loss1 = props_ratio
+            pg_loss2 = torch.clamp(props_ratio, 1 - args.props_clip_coef, 1 + args.props_clip_coef)
+            if args.props_adv:
+                pg_loss = (torch.max(pg_loss1, pg_loss2) * mb_abs_advantages).mean()
+            else:
+                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+            if args.ros:
+                pg_loss = props_logratio.mean()
+
+            entropy_loss = entropy.mean()
+            loss = pg_loss + args.props_lambda * kl_regularizer_loss
+
+            props_optimizer.zero_grad()
+            loss.backward()
+
+            grad_norm = nn.utils.clip_grad_norm_(agent_props.parameters(), args.props_max_grad_norm)
+            grad_norms.append(grad_norm.detach().cpu().numpy())
+
+            props_optimizer.step()
+            num_update_minibatches += 1
+
+        if args.props_target_kl:
+            # print(approx_kl)
+            if approx_kl > args.props_target_kl:
+                done_updating = True
+                break
+
+        if done_updating:
+            break
 def run():
     args = tyro.cli(Args)
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -468,8 +635,8 @@ def run():
             if args.se_freq and global_step % args.se_freq == 0:
                 if 'Chain' in args.env_id or 'GridWorld' in args.env_id:
 
-                    b_obs = obs[:global_step].reshape(-1)
-                    b_actions = actions[:global_step].reshape(-1)
+                    b_obs = obs[:global_step].reshape((-1,) + envs.single_observation_space.shape)
+                    b_actions = actions[:global_step].reshape((-1,) + envs.single_action_space.shape)
                     b_obs = b_obs.detach().numpy()
                     b_actions = b_actions.detach().numpy()
 
@@ -501,70 +668,10 @@ def run():
                 )
 
             ################################## START BEHAVIOR UPDATE ##################################
-
-            if args.sampling_algo == 'props' and global_step % args.props_num_steps == 0:
-                # behavior_update += 1
-
-                ### Flatten the batch
-                b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
-                b_logprobs = logprobs.reshape(-1)
-                b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
-
-                # @TODO: fix when you add historic data
-                if global_step < args.buffer_size * args.num_steps:
-                    b_obs = b_obs[:global_step]
-                    b_logprobs = b_logprobs[:global_step]
-                    b_actions = b_actions[:global_step]
-
-                ### Set props policy equal to current target policy
-                for source_param, dump_param in zip(agent_props.parameters(), agent.parameters()):
-                    source_param.data.copy_(dump_param.data)
-                # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
-                # params = [p for p in agent_props.actor.parameters()]
-                # for p in params[:4]:
-                #     p.requires_grad = False
-
-                props_batch_size = len(b_obs)
-                props_minibatch_size = max(int(props_batch_size // args.props_num_minibatches), props_batch_size)
-                b_inds = np.arange(props_batch_size)
-                clipfracs = []
-                for epoch in range(args.props_update_epochs):
-                    np.random.shuffle(b_inds)
-                    for start in range(0, props_batch_size, props_minibatch_size):
-                        end = start + props_minibatch_size
-                        mb_inds = b_inds[start:end]
-
-                        _, newlogprob, entropy, newvalue = agent_props.get_action_and_value(b_obs[mb_inds],
-                                                                                      b_actions.long()[mb_inds])
-                        logratio = newlogprob - b_logprobs[mb_inds]
-                        ratio = logratio.exp()
-
-                        with torch.no_grad():
-                            # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                            old_approx_kl = (-logratio).mean()
-                            approx_kl = ((ratio - 1) - logratio).mean()
-                            clipfracs += [((ratio - 1.0).abs() > args.props_clip_coef).float().mean().item()]
-
-                        # @TODO: add KL regularization
-                        mb_advantages = -1
-
-                        # Policy loss
-                        pg_loss1 = -mb_advantages * ratio
-                        pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                        pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-
-                        kl_loss = ((ratio - 1) - logratio).mean()
-
-                        loss = pg_loss #+ args.props_lambda * kl_loss
-
-                        optimizer_props.zero_grad()
-                        loss.backward()
-                        # nn.utils.clip_grad_norm_(agent_props.parameters(), args.max_grad_norm)
-                        optimizer_props.step()
-
-                    if args.props_target_kl is not None and approx_kl > args.props_target_kl:
-                        break
-        ################################## END BEHAVIOR UPDATE ##################################
+            if args.sampling_algo in ['ros', 'props'] and global_step % args.props_num_steps == 0:
+                update_behavior_policy(args, global_step, envs, obs, logprobs, actions, agent_props, agent, optimizer_props)
+                # update_behavior_policy(agent_props, envs, optimizer_props, obs, actions, advantages, global_step, args)
+            ################################## END BEHAVIOR UPDATE ##################################
 
         # bootstrap value if not done
         with torch.no_grad():
