@@ -39,9 +39,9 @@ class Args:
     total_timesteps: int = 50000
 
     # Evaluation
-    eval_freq: int = 10000
-    eval_episodes: int = 0
-    se_freq: int = 1
+    eval_freq: int = 10
+    eval_episodes: int = 20
+    se_freq: int = None
 
     # Architecture arguments
     linear: int = 0
@@ -55,7 +55,7 @@ class Args:
 
     # Algorithm specific arguments
     env_id: str = "GridWorld-5x5-v0"
-    learning_rate: float = 0
+    learning_rate: float = 1e-3
     num_envs: int = 1
     num_steps: int = 128
     anneal_lr: bool = False
@@ -69,8 +69,8 @@ class Args:
     ent_coef: float = 0.01
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
-    target_kl: float = 0.1
-    buffer_size: int = 1000
+    target_kl: float = 0.03
+    buffer_size: int = 1
 
     # Behavior
     props_num_steps: int = 16
@@ -201,7 +201,7 @@ def compute_se(args, agent, agent_props, obs, actions, global_step, envs):
 
     # Initialize empirical policy equal to the current PPO policy.
     agent_mle = copy.deepcopy(agent)
-    agent_mle = Agent(envs, linear=False)
+    # agent_mle = Agent(envs, linear=False)
 
     # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
     # params = [p for p in agent_mle.actor_mean.parameters()]
@@ -217,7 +217,6 @@ def compute_se(args, agent, agent_props, obs, actions, global_step, envs):
     if global_step < args.buffer_size * args.num_steps:
         b_obs = b_obs[:global_step]
         b_actions = b_actions[:global_step]
-
 
     n = len(b_obs)
     b_inds = np.arange(n)
@@ -350,6 +349,11 @@ def run():
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     agent_props = copy.deepcopy(agent)
+    # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
+    params = [p for p in agent_props.actor.parameters()]
+    for p in params[:4]:
+        p.requires_grad = False
+
     optimizer_props = optim.Adam(agent_props.parameters(), lr=args.props_learning_rate, eps=1e-5)
 
     ### Logging
@@ -456,8 +460,7 @@ def run():
                 b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
 
                 # @TODO: fix when you add historic data
-                if global_step < args.num_steps:
-                    continue
+                if global_step < args.buffer_size * args.num_steps:
                     b_obs = b_obs[:global_step]
                     b_logprobs = b_logprobs[:global_step]
                     b_actions = b_actions[:global_step]
@@ -465,13 +468,19 @@ def run():
                 ### Set props policy equal to current target policy
                 for source_param, dump_param in zip(agent_props.parameters(), agent.parameters()):
                     source_param.data.copy_(dump_param.data)
+                # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
+                params = [p for p in agent_props.actor.parameters()]
+                for p in params[:4]:
+                    p.requires_grad = False
 
-                b_inds = np.arange(args.props_batch_size)
+                props_batch_size = len(b_obs)
+                props_minibatch_size = max(int(props_batch_size // args.props_num_minibatches), 16)
+                b_inds = np.arange(props_batch_size)
                 clipfracs = []
                 for epoch in range(args.props_update_epochs):
                     np.random.shuffle(b_inds)
-                    for start in range(0, args.props_batch_size, args.props_minibatch_size):
-                        end = start + args.props_minibatch_size
+                    for start in range(0, props_batch_size, props_minibatch_size):
+                        end = start + props_minibatch_size
                         mb_inds = b_inds[start:end]
 
                         _, newlogprob, entropy, newvalue = agent_props.get_action_and_value(b_obs[mb_inds],
@@ -483,7 +492,7 @@ def run():
                             # calculate approx_kl http://joschu.net/blog/kl-approx.html
                             old_approx_kl = (-logratio).mean()
                             approx_kl = ((ratio - 1) - logratio).mean()
-                            clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+                            clipfracs += [((ratio - 1.0).abs() > args.props_clip_coef).float().mean().item()]
 
                         # @TODO: add KL regularization
                         mb_advantages = -1
@@ -492,7 +501,10 @@ def run():
                         pg_loss1 = -mb_advantages * ratio
                         pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
                         pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-                        loss = pg_loss
+
+                        kl_loss = ((ratio - 1) - logratio).mean()
+
+                        loss = pg_loss + args.props_lambda * kl_loss
 
                         optimizer_props.zero_grad()
                         loss.backward()
@@ -535,22 +547,23 @@ def run():
             b_returns = b_returns[:global_step]
             b_values = b_values[:global_step]
         elif args.buffer_size > 1:
-            b_obs = torch.roll(b_obs, args.num_steps)
-            b_logprobs = torch.roll(b_logprobs, args.num_steps)
-            b_actions = torch.roll(b_actions, args.num_steps)
-            b_advantages = torch.roll(b_advantages, args.num_steps)
-            b_returns = torch.roll(b_returns, args.num_steps)
-            b_values = torch.roll(b_values, args.num_steps)
+            b_obs = torch.roll(b_obs, buffer_pos)
+            b_logprobs = torch.roll(b_logprobs, buffer_pos)
+            b_actions = torch.roll(b_actions, buffer_pos)
+            b_advantages = torch.roll(b_advantages, buffer_pos)
+            b_returns = torch.roll(b_returns, buffer_pos)
+            b_values = torch.roll(b_values, buffer_pos)
 
         ### Target policy (and value network) update
         target_update_count += 1
-
-        b_inds = np.arange(args.batch_size)
+        batch_size = len(b_obs)
+        minibatch_size = max(batch_size // args.num_minibatches, 16)
+        b_inds = np.arange(batch_size)
         clipfracs = []
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
-            for start in range(0, args.batch_size, args.minibatch_size):
-                end = start + args.minibatch_size
+            for start in range(0, batch_size, minibatch_size):
+                end = start + minibatch_size
                 mb_inds = b_inds[start:end]
 
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
@@ -633,7 +646,7 @@ def run():
                 **logs,
             )
 
-        if iteration % args.se_freq == 0:
+        if args.se_freq and iteration % args.se_freq == 0:
             kl_mle_target = compute_se(args, agent, agent_props, obs, actions, global_step, envs)
             logs_sampling_error['timestep'].append(global_step)
             logs_sampling_error['sampling_error'].append(kl_mle_target)
