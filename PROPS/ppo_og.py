@@ -18,6 +18,7 @@ import custom_envs
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
+from PROPS.gridworld_clean.compute_true_gradient import compute_gradient
 from PROPS.utils import get_latest_run_id
 
 
@@ -41,7 +42,7 @@ class Args:
     # Evaluation
     eval_freq: int = 10
     eval_episodes: int = 20
-    se_freq: int = None
+    se_freq: int = 1
 
     # Architecture arguments
     linear: int = 0
@@ -50,12 +51,12 @@ class Args:
     algo: str = 'ppo'
 
     # Sampling algorithm
-    # sampling_algo: str = 'props'
-    sampling_algo: str = 'on_policy'
+    sampling_algo: str = 'props'
+    # sampling_algo: str = 'on_policy'
 
     # Algorithm specific arguments
-    env_id: str = "GridWorld-5x5-v0"
-    learning_rate: float = 1e-3
+    env_id: str = "Chain-7-v0"
+    learning_rate: float = 0
     num_envs: int = 1
     num_steps: int = 128
     anneal_lr: bool = False
@@ -70,7 +71,7 @@ class Args:
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
     target_kl: float = 0.03
-    buffer_size: int = 1
+    buffer_size: int = 1000
 
     # Behavior
     props_num_steps: int = 16
@@ -109,6 +110,8 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 class Agent(nn.Module):
     def __init__(self, envs, linear):
         super().__init__()
+        self.obs_dim = envs.single_observation_space.shape[0]
+
         self.critic = nn.Sequential(
             layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
             nn.Tanh(),
@@ -155,6 +158,18 @@ class Agent(nn.Module):
             logits = self.actor(x)
             probs = Categorical(logits=logits).probs.detach().numpy()
         return probs
+
+    def get_pi(self):
+        pi = []
+        with torch.no_grad():
+            x = torch.zeros(self.obs_dim)
+            for i in range(self.obs_dim):
+                x[:] = 0
+                x[i] = 1
+                logits = self.actor(x)
+                probs = Categorical(logits=logits).probs.detach().numpy()
+                pi.append(probs)
+        return np.array(pi)
 
 
 def simulate(env, actor, eval_episodes):
@@ -286,7 +301,7 @@ def run():
             args.seed = np.random.randint(2 ** 32 - 1)
 
     ### Override hyperparameters based on sampling method
-    assert args.sampling_algo in ['on_policy', 'ros', 'props', 'oracle_adaptive']
+    assert args.sampling_algo in ['on_policy', 'ros', 'props', 'greedy_adaptive', 'oracle_adaptive']
     if args.algo == 'ros':
         args.props_num_steps = 1
         args.props_update_epochs = 1
@@ -350,9 +365,9 @@ def run():
 
     agent_props = copy.deepcopy(agent)
     # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
-    params = [p for p in agent_props.actor.parameters()]
-    for p in params[:4]:
-        p.requires_grad = False
+    # params = [p for p in agent_props.actor.parameters()]
+    # for p in params[:4]:
+    #     p.requires_grad = False
 
     optimizer_props = optim.Adam(agent_props.parameters(), lr=args.props_learning_rate, eps=1e-5)
 
@@ -375,6 +390,12 @@ def run():
     sa_counts = np.zeros(shape=(envs.single_observation_space.shape[-1], envs.single_action_space.n))
     possible_actions = np.arange(envs.single_action_space.n)
 
+    ### Load exact gradient
+    if 'Chain' in args.env_id or 'GridWorld' in args.env_id:
+        sa_occupancy_true = np.load(f'gridworld_clean/data/{args.env_id}/sa_occupancy_true.npy')
+        grad_true = np.load(f'gridworld_clean/data/{args.env_id}/grad_true.npy')
+        adv_true = np.load(f'gridworld_clean/data/{args.env_id}/adv_true.npy')
+        grad_true_norm = np.linalg.norm(grad_true)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -401,11 +422,13 @@ def run():
                 if args.sampling_algo in ['props', 'ros']:
                     action, _, _, _ = agent_props.get_action_and_value(next_obs)
                     _, logprob, _, value = agent.get_action_and_value(next_obs, action=action)
+                    a_idx = action[0].item()
                 elif args.sampling_algo == 'greedy_adaptive':
                     s_idx = np.argmax(next_obs)
+                    # print(s_idx)
                     sa = sa_counts[s_idx]
                     pi = agent.get_pi_at_s(next_obs)[0]
-
+                    # pi = np.array([0.5, 0.5])
                     if np.sum(sa) == 0:
                         a_idx = np.random.choice(possible_actions, p=pi)
                     else:
@@ -415,24 +438,17 @@ def run():
                     action = torch.Tensor([a_idx])
                     _, logprob, _, value = agent.get_action_and_value(next_obs, action)
                 elif args.sampling_algo == 'oracle_adaptive':
-                    s_idx = np.argmax(next_obs)
-                    sa = sa_counts[s_idx]
-                    pi = agent.get_pi_at_s(next_obs)[0]
-
-                    if np.sum(sa) == 0:
-                        a_idx = np.random.choice(possible_actions, p=pi)
-                    else:
-                        pi_empirical = sa / np.sum(sa)
-                        a_idx = np.argmin(pi_empirical - agent.get_pi_at_s(next_obs))
-
-                    action = torch.Tensor([a_idx])
-                    _, logprob, _, value = agent.get_action_and_value(next_obs, action)
-
+                    raise NotImplementedError()
                 else:
                     action, logprob, _, value = agent.get_action_and_value(next_obs)
+                    a_idx = action[0].item()
+
                 values[buffer_pos] = value.flatten()
             actions[buffer_pos] = action
             logprobs[buffer_pos] = logprob
+
+            s_idx = np.where(next_obs[0] == 1)[0][0]
+            sa_counts[s_idx, a_idx] += 1
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
@@ -448,6 +464,41 @@ def run():
                         # print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
                         # writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                         # writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+
+            if args.se_freq and global_step % args.se_freq == 0:
+                if 'Chain' in args.env_id or 'GridWorld' in args.env_id:
+
+                    b_obs = obs[:global_step].reshape(-1)
+                    b_actions = actions[:global_step].reshape(-1)
+                    b_obs = b_obs.detach().numpy()
+                    b_actions = b_actions.detach().numpy()
+
+                    grad_empirical = compute_gradient(envs.envs[0].unwrapped, agent.get_pi(), b_obs, b_actions.astype(int), adv_true)
+                    # grad_empirical_norm = np.linalg.norm(grad_empirical)
+                    grad_accuracy = (grad_empirical @ grad_true) / np.linalg.norm(grad_empirical) / grad_true_norm
+
+                    logs_sampling_error['grad'].append(grad_empirical)
+                    logs_sampling_error['grad_true'].append(grad_true)
+                    logs_sampling_error['grad_accuracy'].append(grad_accuracy)
+
+                    sa_occupancy = sa_counts / sa_counts.sum()
+                    se = np.abs(sa_occupancy - sa_occupancy_true).sum()
+                    # print(sa_occupancy)
+
+                    logs_sampling_error['sampling_error'].append(se)
+                    logs_sampling_error['sa_occupancy'].append(sa_occupancy)
+                    logs_sampling_error['sa_occupancy_true'].append(sa_occupancy_true)
+
+                    # print(se)
+                else:
+                    kl_mle_target = compute_se(args, agent, agent_props, obs, actions, global_step, envs)
+                    logs_sampling_error['sampling_error'].append(kl_mle_target)
+
+                logs_sampling_error['timestep'].append(global_step)
+                np.savez(
+                    f'{args.output_dir}/sampling_error.npz',
+                    **logs_sampling_error,
+                )
 
             ################################## START BEHAVIOR UPDATE ##################################
 
@@ -469,12 +520,12 @@ def run():
                 for source_param, dump_param in zip(agent_props.parameters(), agent.parameters()):
                     source_param.data.copy_(dump_param.data)
                 # Freeze the feature layers of the empirical policy (as done in the Robust On-policy Sampling (ROS) paper)
-                params = [p for p in agent_props.actor.parameters()]
-                for p in params[:4]:
-                    p.requires_grad = False
+                # params = [p for p in agent_props.actor.parameters()]
+                # for p in params[:4]:
+                #     p.requires_grad = False
 
                 props_batch_size = len(b_obs)
-                props_minibatch_size = max(int(props_batch_size // args.props_num_minibatches), 16)
+                props_minibatch_size = max(int(props_batch_size // args.props_num_minibatches), props_batch_size)
                 b_inds = np.arange(props_batch_size)
                 clipfracs = []
                 for epoch in range(args.props_update_epochs):
@@ -504,11 +555,11 @@ def run():
 
                         kl_loss = ((ratio - 1) - logratio).mean()
 
-                        loss = pg_loss + args.props_lambda * kl_loss
+                        loss = pg_loss #+ args.props_lambda * kl_loss
 
                         optimizer_props.zero_grad()
                         loss.backward()
-                        nn.utils.clip_grad_norm_(agent_props.parameters(), args.max_grad_norm)
+                        # nn.utils.clip_grad_norm_(agent_props.parameters(), args.max_grad_norm)
                         optimizer_props.step()
 
                     if args.props_target_kl is not None and approx_kl > args.props_target_kl:
@@ -557,7 +608,7 @@ def run():
         ### Target policy (and value network) update
         target_update_count += 1
         batch_size = len(b_obs)
-        minibatch_size = max(batch_size // args.num_minibatches, 16)
+        minibatch_size = max(batch_size // args.num_minibatches, batch_size)
         b_inds = np.arange(batch_size)
         clipfracs = []
         for epoch in range(args.update_epochs):
@@ -645,16 +696,6 @@ def run():
                 f'{args.output_dir}/evaluations.npz',
                 **logs,
             )
-
-        if args.se_freq and iteration % args.se_freq == 0:
-            kl_mle_target = compute_se(args, agent, agent_props, obs, actions, global_step, envs)
-            logs_sampling_error['timestep'].append(global_step)
-            logs_sampling_error['sampling_error'].append(kl_mle_target)
-            np.savez(
-                f'{args.output_dir}/sampling_error.npz',
-                **logs_sampling_error,
-            )
-            print(kl_mle_target)
 
     envs.close()
     # writer.close()
