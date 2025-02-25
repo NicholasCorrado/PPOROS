@@ -120,7 +120,7 @@ if __name__ == "__main__":
 
 
     save_dir = f'figures'
-    save_name = f'gridworld.png'
+    save_name = f'sillybandit.png'
     os.makedirs(save_dir, exist_ok=True)
     plt.savefig(f'{save_dir}/{save_name}', dpi=100)
     plt.show()

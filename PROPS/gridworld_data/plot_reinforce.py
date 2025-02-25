@@ -54,8 +54,8 @@ if __name__ == "__main__":
             for algo in ['oracle_adaptive', 'reinforce_props', 'reinforce_on_policy']:
                 color_palette = sns.color_palette('colorblind')
                 # if b == 1 and s == 512: continue
-                results_dir = f"rl2/{env_id}/{algo}"
-                timesteps, results = get_data(results_dir=results_dir, field_name=stat, x='timesteps')
+                results_dir = f"rl/{env_id}/{algo}"
+                timesteps, results = get_data(results_dir=results_dir, field_name=stat, x='timesteps', opt=True)
 
                 # A warning will be raised when we fail to load from `results_dir`. Skip these failures.
                 if len(results) > 0:

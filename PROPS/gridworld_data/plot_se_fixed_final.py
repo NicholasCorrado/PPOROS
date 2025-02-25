@@ -46,7 +46,7 @@ if __name__ == "__main__":
     # r, c = -1, -1
     env_id = 'GridWorld-10x10-v0'
 
-    for env_id in ['GridWorld-5x5-v0', 'GridWorld-10x10-v0']:
+    for env_id in ['GridWorld-5x5-v0',]:
         for stat in ['se', 'grad_accuracy']:
             results_dict = {}
             i += 1

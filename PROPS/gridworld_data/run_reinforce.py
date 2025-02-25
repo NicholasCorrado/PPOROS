@@ -10,19 +10,19 @@ import os
 
 
 
-for i in range(0, 20):
-    # for oracle in [0]:
-    #     os.system(f'python ../reinforce_discrete.py -f rl2 --seed {i} --run-id {i} --linear 1'
-    #               f' --env-id GridWorld-5x5-v0 --total-timesteps {200000} --eval-freq {10000} --eval-episodes 100'
-    #               f' --props 0 -b {1} -lr {3e-3} --num-traj {100} '
-    #               f' --oracle-adaptive {oracle}')
+for i in range(0, 10):
+    for oracle in [0]:
+        os.system(f'python ../ppo_props_discrete_clean.py -f rl3 --seed {i} --run-id {i} --linear 1 --gamma 0.9999'
+                  f' --env-id GridWorld1D-10-v0 --total-ztimesteps {20000} --eval-freq {2000} --eval-episodes 100'
+                  f' --props 0 -b {1} -lr {3e-3} --num-steps {1000} '
+                  f' --oracle-adaptive {oracle}')
 
-    os.system(f'python ../reinforce_discrete.py -f rl2 --seed {i} --run-id {i} --linear 1'
-              f' --env-id GridWorld-5x5-v0 --total-timesteps {300000} --eval-freq {10000} --eval-episodes 100'
-              f' --props 0 -b {1} -lr {3e-3} --num-traj {100} '
-              f' --props 1 -props-lr {1e-1} --props-num-traj 5 --props-num-minibatches 8 --props-update-epochs 4 --props-target-kl 0.3 --props-clip-coef 0.3'
-              f' --se 0 --se-freq 1 --track 1'
-              f' --oracle-adaptive 0 ')
+    # os.system(f'python ../reinforce_discrete.py -f rl3 --seed {i} --run-id {i} --linear 1'
+    #           f' --env-id GridWorld-5x5-v0 --total-timesteps {300000} --eval-freq {10000} --eval-episodes 100'
+    #           f' --props 0 -b {1} -lr {3e-3} --num-traj {100} '
+    #           f' --props 1 -props-lr {1e-1} --props-num-traj 5 --props-num-minibatches 8 --props-update-epochs 4 --props-target-kl 0.3 --props-clip-coef 0.3'
+    #           f' --se 0 --se-freq 1 --track 1'
+    #           f' --oracle-adaptive 0 ')
 #
 # for plr in [1e-1]:
 #     for i in range(1,5):

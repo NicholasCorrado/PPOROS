@@ -171,14 +171,14 @@ def simulate(env, num_episodes):
     return np.array(all_obs), np.array(all_actions), sa_counts
 
 if __name__ == '__main__':
-    env_id = 'GridWorld-5x5-v0'
+    # env_id = 'GridWorld1d-5x5-v0'
+    env_id = 'GridWorld1D-10-v0'
     env = gym.make(env_id)
-    # env = gym.make('GridWorld1D-10-v0')
 
     obs, actions, sa = simulate(env, num_episodes=100000)
 
     sa_occupancy = sa / sa.sum()
-    adv, q, v = value_iteration(env, 100)
+    adv, q, v = value_iteration_1d(env, 100)
     pi = np.ones(shape=(25, 4))*0.25
     grad = compute_gradient(env, pi, obs, actions, adv)
 

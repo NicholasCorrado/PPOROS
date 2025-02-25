@@ -13,7 +13,7 @@ TIMESTEPS = {
 if __name__ == "__main__":
 
     commands = ""
-    mem = 0.8
+    mem = 1.8
     disk = 2
 
 
@@ -22,11 +22,11 @@ if __name__ == "__main__":
     #     'GridWorld-10x10-v0',
     #     'GridWorld-20x20-v0',
     # ]
-    for l in [10, 20]:
+    for l in [5]:
         env_id = f'GridWorld-{l}x{l}-v0'
         # for df in [1, 2, 4, 8, 16, 32]:
-        for b in [1, 2, 4, 8, 16, 32]:
-            for lr in [1e-3]:
+        for b in [1, 2, 4]:
+            for lr in [1e-2, 3e-3, 1e-3, 3e-4]:
                 for s in [2*l, 4*l, 8*l, 16*l, 32*l, 64*l]:
                     # b = 1
                     se = 0
@@ -34,12 +34,12 @@ if __name__ == "__main__":
                     ps = s
                     plr = 0
                     pkl = 0
-                    commands += f'{mem},{disk},ppo_props_discrete.py --env-id {env_id} ' \
+                    commands += f'{mem},{disk},ppo_props_discrete_clean.py --env-id {env_id} ' \
                                 f' -s lr_{lr}/s_{s}/b_{b}' \
                                 f' --total-timesteps {4000*s} --eval-freq {s * 100} --eval-episodes 100 ' \
-                                f' --actor-critic 1 -b {b} --num-steps {s} -lr {lr} --anneal-lr 0 --linear 1'\
+                                f' -b {b} --num-steps {s} -lr {lr} --anneal-lr 0 --linear 1'\
                                 f' --props {props} --props-num-steps {ps} -props-lr {plr} --props-target-kl {pkl} ' \
-                                f' --props-clip-coef 0.3 --props-lambda 0.1 --props-update-epochs 4  --props-num-minibatches 4' \
+                                f' --props-clip-coef 0.3 --props-lambda 0.5 --props-update-epochs 16  --props-num-minibatches 4' \
                                 f' --se 0 --se-freq 1 --track 0\n'
 
 

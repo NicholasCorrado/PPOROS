@@ -32,7 +32,7 @@ if __name__ == "__main__":
         'GridWorld-5x5-v0',
     ]
 
-    nrows = 2
+    nrows = 1
     ncols = 2
     fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(ncols*5, nrows*5))
     if nrows > 1 or ncols > 1:
@@ -46,34 +46,44 @@ if __name__ == "__main__":
     # r, c = -1, -1
     env_id = 'GridWorld-10x10-v0'
 
-    for env_id in ['GridWorld-5x5-v0']:
+    for env_id in ['GridWorld1D-10-v0']:
         for stat in ['se', 'grad_accuracy']:
             results_dict = {}
             i += 1
             color_i = 0
-            for r in [0.5, 0.99]:
-                for algo in ['oracle_adaptive', 'reinforce_props', 'reinforce_on_policy']:
-                    color_palette = sns.color_palette('colorblind')
-                    # if b == 1 and s == 512: continue
-                    results_dir = f"se_fixed_0/{env_id}/{algo}"
-                    results_dir = f"tmp_{r}/{env_id}/{algo}"
-                    timesteps, results = get_data(results_dir=results_dir, field_name=stat, x='timesteps')
+            for algo in ['oracle_adaptive', 'ppo_props', 'ppo_ros', 'ppo_on_policy']:
+                color_palette = sns.color_palette('colorblind')
+                # if b == 1 and s == 512: continue
+                results_dir = f"se_fixed_new/{env_id}/{algo}"
 
-                    # A warning will be raised when we fail to load from `results_dir`. Skip these failures.
-                    if len(results) > 0:
-                        if 'props' in algo:
-                            key = "PROPS"
-                        if 'on_policy' in algo:
-                            key = "On-Policy Sampling"
-                        if 'oracle' in algo:
-                            key = "Oracle Adaptive Sampling"
 
-                        key += f' {r}'
-                        print(results.shape, timesteps.shape)
-                        results_dict[key] = results
-                        timesteps_dict[key] = timesteps[-len(results[0]):]
-                        color_dict[key] = color_palette[color_i]
-                        color_i += 1
+                # results_dir = f"condor/gw_short/results/{env_id}/{algo}"
+                # if 'ros' in algo:
+                #     results_dir = f"condor/gw_short_2/results/{env_id}/{algo}"
+                #
+                # if 'props' in algo:
+                #     results_dir = f"se_fixed_final_test/{env_id}/{algo}"
+
+
+                timesteps, results = get_data(results_dir=results_dir, field_name=stat, x='timesteps')
+                # results = results[:10]
+                # A warning will be raised when we fail to load from `results_dir`. Skip these failures.
+                if len(results) > 0:
+                    if 'props' in algo:
+                        key = "PROPS"
+                    if 'on_policy' in algo:
+                        key = "On-Policy Sampling"
+                    if 'oracle' in algo:
+                        key = "Oracle Adaptive Sampling"
+                    if 'ros' in algo:
+                        key = 'ROS'
+
+                    # key += f' {r}'
+                    print(results.shape, timesteps.shape)
+                    results_dict[key] = results
+                    timesteps_dict[key] = timesteps[-len(results[0]):]
+                    color_dict[key] = color_palette[color_i]
+                    color_i += 1
             #
             # algos = [,]
             # for algo in algos:
@@ -129,11 +139,11 @@ if __name__ == "__main__":
     plt.tight_layout()
 
     # # Push plots down to make room for the the legend
-    fig.subplots_adjust(top=0.90)
+    fig.subplots_adjust(top=0.85)
     # # Fetch and plot the legend from one of the subplots.
     ax = fig.axes[0]
     handles, labels = ax.get_legend_handles_labels()
-    fig.legend(handles, labels, loc='upper center', ncol=3, fontsize='large')
+    fig.legend(handles, labels, loc='upper center', ncol=4, fontsize='large')
 
     # ax.legend(ncol=1, fontsize='large')
 
