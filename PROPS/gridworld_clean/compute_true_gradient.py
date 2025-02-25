@@ -23,8 +23,21 @@ def compute_gradient(env, pi, s, a, A):
 
     return grad.reshape(-1)
 
+def compute_gradient_empirical(env, pi, s, a, A):
+    # sa = np.zeros((25, 4))
+    s = np.argmax(s, axis=-1).reshape(-1)
+    a = a.reshape(-1)
+    # grad = (A[s, a]*(1 - pi[s, a])).mean(axis=-1)
+    grad = np.zeros((np.prod(env.shape), env.action_space.n))
+    for si, ai, Ai in zip(s, a, A):
+        grad[si, ai] += Ai * (1 - pi[si, ai])
 
-def value_iteration(env, max_iterations=100, theta=0.000001):
+    grad = grad / len(s)
+
+    return grad.reshape(-1)
+
+
+def value_iteration(env, pi, max_iterations=100, theta=0.000001):
     shape = env.shape
     rows, cols = shape[0], shape[1]
     n_states = rows * cols
@@ -33,7 +46,8 @@ def value_iteration(env, max_iterations=100, theta=0.000001):
     v = np.zeros(n_states)
     q = np.zeros((n_states, 4))
     r = env.rewards.reshape(-1)
-    pi = np.ones((n_states, 4)) * 0.25
+    # pi = np.ones((n_states, 4)) * 0.25
+
 
     #######################################
     ### START: CREATE TRANSITION MATRIX ###
@@ -138,7 +152,7 @@ def value_iteration_1d(env, max_iterations=100, theta=0.000001):
     A = q - np.tile(v, (n_actions, 1)).T
     return A, q, v
 
-def simulate(env, num_episodes):
+def simulate(env, pi, num_episodes):
 
     sa_counts = np.zeros(shape=(env.observation_space.shape[-1], env.action_space.n))
     all_obs = []
@@ -152,7 +166,10 @@ def simulate(env, num_episodes):
             with torch.no_grad():
                 # actions = agent.get_action(torch.Tensor(obs).to(device), noise=False)
                 # actions = actions.cpu().numpy()
-                actions = env.action_space.sample()
+                # actions = env.action_space.sample()
+                s_idx = np.argmax(obs)
+
+                actions = np.random.choice(np.arange(env.action_space.n), p=pi[s_idx])
 
             s_idx = np.argmax(obs == 1)
             sa_counts[s_idx, actions] += 1
@@ -176,17 +193,27 @@ if __name__ == '__main__':
     # env_id = 'Chain-7-v0'
     env = gym.make(env_id)
 
-    obs, actions, sa = simulate(env, num_episodes=int(1e6))
+    pi = np.ones(shape=(25, env.action_space.n))*0.25
+    # pi = np.array([[0.1, 0.1, 0.1, 0.7]]*25)
+    obs, actions, sa = simulate(env, pi, num_episodes=int(1e6))
 
     sa_occupancy = sa / sa.sum()
     print(sa_occupancy)
-    adv, q, v = value_iteration(env, 100)
+    adv, q, v = value_iteration(env, pi, 100)
     # adv, q, v = value_iteration_1d(env, 100)
-    pi = np.ones(shape=(25, env.action_space.n))*0.25
+
+    print(pi)
     grad = compute_gradient(env, pi, obs, actions, adv)
 
     print(len(obs))
     print(q)
+
+    # os.makedirs(f'data/{env_id}/non_uniform', exist_ok=True)
+    # np.save(f'data/{env_id}/non_uniform/grad_true.npy', grad)
+    # np.save(f'data/{env_id}/non_uniform/adv_true.npy', adv)
+    # np.save(f'data/{env_id}/non_uniform/q_true.npy', q)
+    # np.save(f'data/{env_id}/non_uniform/v_true.npy', v)
+    # np.save(f'data/{env_id}/non_uniform/sa_occupancy_true.npy', sa_occupancy)
 
     os.makedirs(f'data/{env_id}', exist_ok=True)
     np.save(f'data/{env_id}/grad_true.npy', grad)

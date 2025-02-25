@@ -85,28 +85,31 @@ if __name__ == "__main__":
     # r, c = -1, -1
     env_id = 'GridWorld-10x10-v0'
 
-    for env_id in ['GridWorld1D-10-v0']:
+    for env_id in ['Chain-7-v0']:
         for stat in ['return', 'success_rate']:
             results_dict = {}
             i += 1
             color_i = 0
-            for algo in ['ppo_props', 'ppo_on_policy']:
-                for lr in [0.01]:
-                    for s in [10]:
+            for algo in ['ppo_oracle_adaptive', 'ppo_props', 'ppo_on_policy']:
+                for lr in [0.1]:
+                    for s in [10, 20, 30, 40, 50]:
                         color_palette = sns.color_palette('colorblind')
                         # if b == 1 and s == 512: continue
-                        results_dir = f"rl/{env_id}/{algo}/lr_{lr}/s_{s}"
-                        timesteps, results = get_data(results_dir=results_dir, field_name=stat, x='timestep')
+                        results_dir = f"condor/chain/results/{env_id}/{algo}/lr_{lr}/s_{s}"
+                        timesteps, results = get_data(results_dir=results_dir, field_name=stat, x='target_update')
 
                         # A warning will be raised when we fail to load from `results_dir`. Skip these failures.
                         if len(results) > 0:
-                            # key = f"{algo}, {lr}, {s}"
-                            key = f"{algo}"
+                            key = f"{algo}, {lr}, {s}"
+                            # key = f"{algo}"
                             print(results.shape, timesteps.shape)
                             results_dict[key] = results
                             timesteps_dict[key] = timesteps[-len(results[0]):]
                             color_dict[key] = color_palette[color_i]
                             color_i += 1
+
+                            if 'on_policy' in algo:
+                                linestyles_dict[key] = ':'
             #
             # algos = [,]
             # for algo in algos:

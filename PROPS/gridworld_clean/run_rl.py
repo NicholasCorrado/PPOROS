@@ -9,37 +9,85 @@ import os
         # num_traj = 4
 
 
+os.chdir('..')
+for s in [80]:
+    total_timesteps = 500 * s//20
+    lr = 1e-1
+    eval_freq = 1
 
-for s in [10]:
-    total_timesteps = 5000 * s//10
-    lr = 1e-2
-    eval_freq = 100
 
+    for i in range(0, 50):
+        os.system(f'python ppo_og.py '
+                  f' --output-rootdir gridworld_clean/rl '
+                  f' --output_subdir lr_{lr}/s_{s}'
+                  f' --seed {i} --run-id {i} '
+                  f' --env-id GridWorld-5x5-v0 '
+                  f' --total-timesteps {total_timesteps} --eval-freq {eval_freq} --eval-episodes 100'
+                  f' --sampling-algo on_policy '
+                  f' --learning-rate {lr} --num-steps {s} '
+                  f' --linear {1}')
 
-    for i in range(0, 100):
-        # os.system(f'python ../ppo_og.py '
-        #           f' --output-rootdir rl '
+        # os.system(f'python ppo_og.py '
+        #           f' --output-rootdir gridworld_clean/rl '
         #           f' --output_subdir lr_{lr}/s_{s}'
         #           f' --seed {i} --run-id {i} '
-        #           f' --env-id GridWorld1D-10-v0 '
+        #           f' --env-id GridWorld-5x5-v0 '
         #           f' --total-timesteps {total_timesteps} --eval-freq {eval_freq} --eval-episodes 100'
+        #           f' --sampling-algo greedy_adaptive '
         #           f' --learning-rate {lr} --num-steps {s} '
         #           f' --linear {1}')
 
-        os.system(f'python ../ppo_og.py --output-rootdir rl '
-                  f' --output_subdir lr_{lr}/s_{s}'
-                  f' --seed {i} --run-id {i} --linear {1}'
-                  f' --env-id GridWorld1D-10-v0 --total-timesteps {total_timesteps} '
-                  f' --eval-freq {eval_freq} --eval-episodes 100'
-                  f' --learning-rate {lr} --num-steps {s} '
-                  f' --sampling-algo props'
-                  f' --props-num-steps {1}'
-                  f' --props-learning-rate {1e-1}'
-                  f' --props-update-epochs {8}'
-                  f' --props-num-minibatches {1}'
-                  f' --props-target-kl {0.5}'
-                  f' --props-lambda 0'
-                  )
+        # os.system(f'python ppo_og.py '
+        #           f' --output-rootdir gridworld_clean/rl '
+        #           f' --output_subdir lr_{lr}/s_{s}'
+        #           f' --seed {i} --run-id {i} '
+        #           f' --env-id GridWorld-5x5-v0 '
+        #           f' --total-timesteps {total_timesteps} --eval-freq {eval_freq} --eval-episodes 100'
+        #           f' --sampling-algo on_policy '
+        #           f' --learning-rate {lr} --num-steps {s} '
+        #           f' --linear {1}'
+        #           f' --sampling-algo props'
+        #           f' --props-num-steps {4}'
+        #           f' --props-learning-rate {1e-1}'
+        #           f' --props-update-epochs {8}'
+        #           f' --props-num-minibatches {1}'
+        #           f' --props-target-kl {0.5}'
+        #           f' --props-lambda 0'
+        #           )
+
+        # os.system(f'python ppo_og.py '
+        #           f' --output-rootdir gridworld_clean/rl '
+        #           f' --output_subdir lr_{lr}/s_{s}'
+        #           f' --seed {i} --run-id {i} '
+        #           f' --env-id GridWorld-5x5-v0 '
+        #           f' --total-timesteps {total_timesteps} --eval-freq {eval_freq} --eval-episodes 100'
+        #           f' --sampling-algo on_policy '
+        #           f' --learning-rate {lr} --num-steps {s} '
+        #           f' --linear {1}'
+        #           f' --sampling-algo ros'
+        #           f' --props-num-steps {1}'
+        #           f' --props-learning-rate {1e-1}'
+        #           f' --props-update-epochs {8}'
+        #           f' --props-num-minibatches {1}'
+        #           f' --props-target-kl {0.5}'
+        #           f' --props-lambda 0'
+        #           )
+
+        # os.system(
+        #     f'python ../ppo_og.py'
+        #     f' --output-rootdir rl'
+        #     f' --output_subdir lr_{lr}/s_{s}'
+        #     f' --seed {i}'
+        #     f' --run-id {i}'
+        #     f' --env-id GridWorld1D-10-v0'
+        #     f' --total-timesteps {total_timesteps}'
+        #     f' --eval-freq {eval_freq}'
+        #     f' --eval-episodes 100'
+        #     f' --sampling-algo oracle_adaptive'
+        #     f' --learning-rate {lr}'
+        #     f' --num-steps {s}'
+        #     f' --linear {1}'
+        # )
 
     # os.system(f'python ../reinforce_discrete.py -f rl3 --seed {i} --run-id {i} --linear 1'
     #           f' --env-id GridWorld-5x5-v0 --total-timesteps {300000} --eval-freq {10000} --eval-episodes 100'
