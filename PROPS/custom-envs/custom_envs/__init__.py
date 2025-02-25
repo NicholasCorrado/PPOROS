@@ -34,6 +34,14 @@ register(
     }
 )
 
+register(
+    id="Bandit20-v0",
+    entry_point="custom_envs.envs.bandit:BanditEnv",
+    max_episode_steps=1,
+    kwargs={
+        'n': 20
+    }
+)
 
 register(
     id="Bandit100-v0",
