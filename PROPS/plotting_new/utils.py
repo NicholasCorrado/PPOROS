@@ -22,7 +22,7 @@ YLIMS = {
     'Reacher-v4': (-70, 0),
 }
 
-def get_data(results_dir, field_name='returns', filename='evaluations.npz'):
+def get_data(results_dir, field_name='returns', filename='evaluations.npz', x='updates', opt=False, do_avg=True):
 
     try:
         paths = []
@@ -35,22 +35,32 @@ def get_data(results_dir, field_name='returns', filename='evaluations.npz'):
 
     timesteps = None
     results = []
-    for path in paths[:-1]:
-
+    first_len = None
+    for path in paths:
         with np.load(path) as data:
 
             vals = data[field_name]
-            if len(vals.shape) > 1:
+            if opt:
+                vals = vals == 1
+            if len(vals.shape) > 1 and do_avg:
                 avg_vals = np.average(vals, axis=1)
             else:
                 avg_vals = vals
 
-            results.append(avg_vals)
-            try:
-                timesteps = data['timesteps']
-            except:
-                timesteps = data['t']
+            if first_len is None:
+                first_len = len(avg_vals)
+            if len(avg_vals) == first_len:
+                # if len(avg_vals) < 25 : continue
+                results.append(avg_vals)
+                timesteps = data[x]
 
+
+
+            # try:
+            #     timesteps = data['updates']
+            # except:
+            #     timesteps = data['t']
+    # print(timesteps.shape)
     return timesteps, np.array(results)
     # n = 490
     # return timesteps[:n], np.array(results)[:n]

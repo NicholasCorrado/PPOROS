@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.optim as optim
 import yaml
 
-from PROPS.gridworld.advantage import value_iteration
+# from PROPS.gridworld.advantage import value_iteration
 from PROPS.utils import Evaluate, AgentDiscrete, EvaluateDiscrete, ConfigLoader, StoreDict
 from PROPS.utils import get_latest_run_id, make_env, Agent
 
@@ -510,9 +510,9 @@ def main():
         ns_eval = sa_eval.sum()
         sa_true_init = sa_eval/ns_eval
 
-        A_init, q_init, v_init = value_iteration(envs.envs[0].unwrapped, 100)
-        grad_true = compute_gradient(envs.envs[0].unwrapped, agent.get_pi(), eval_obs, eval_actions, A_init)
-        grad_true_norm = np.linalg.norm(grad_true)
+        # A_init, q_init, v_init = value_iteration(envs.envs[0].unwrapped, 100)
+        # grad_true = compute_gradient(envs.envs[0].unwrapped, agent.get_pi(), eval_obs, eval_actions, A_init)
+        # grad_true_norm = np.linalg.norm(grad_true)
 
     if args.props_eval:
         eval_module_props.evaluate(global_step, train_env=envs, noise=False)

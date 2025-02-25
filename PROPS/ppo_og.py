@@ -20,7 +20,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from PROPS.gridworld_clean.compute_true_gradient import compute_gradient
 from PROPS.utils import get_latest_run_id
-
+from collections import deque
 
 @dataclass
 class Args:
@@ -172,9 +172,10 @@ class Agent(nn.Module):
         return np.array(pi)
 
 
-def simulate(env, actor, eval_episodes):
+def simulate(env, actor, eval_episodes, eval_steps=np.inf):
     logs = defaultdict(list)
-
+    sa_count = np.zeros(shape=(env.observation_space.shape[0], env.action_space.n))
+    step = 0
     for episode_i in range(eval_episodes):
         logs_episode = defaultdict(list)
 
@@ -182,10 +183,15 @@ def simulate(env, actor, eval_episodes):
         done = False
 
         while not done:
+
             # ALGO LOGIC: put action logic here
             with torch.no_grad():
                 actions, _, _ = actor.get_action(torch.Tensor(obs).to('cpu'))
                 actions = actions.cpu().numpy()
+
+            s_idx = np.argmax(obs)
+            a_idx = actions
+            sa_count[s_idx, a_idx] += 1
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, rewards, terminateds, truncateds, infos = env.step(actions)
@@ -195,6 +201,14 @@ def simulate(env, actor, eval_episodes):
             obs = next_obs
 
             logs_episode['rewards'].append(rewards)
+
+            step += 1
+
+            if step >= eval_steps:
+                break
+        if step >= eval_steps:
+            break
+
 
         logs['returns'].append(np.sum(logs_episode['rewards']))
         try:
@@ -206,7 +220,63 @@ def simulate(env, actor, eval_episodes):
     return_std = np.std(logs['returns'])
     success_avg = np.mean(logs['successes'])
     success_std = np.std(logs['successes'])
-    return return_avg, return_std, success_avg, success_std
+    return return_avg, return_std, success_avg, success_std, sa_count
+    # return np.array(eval_returns), np.array(eval_obs), np.array(eval_actions), np.array(eval_rewards), sa_counts
+
+
+
+def simulate_fast(env, actor, eval_episodes, eval_steps=np.inf):
+    logs = defaultdict(list)
+    sa_count = np.zeros(shape=(env.observation_space.shape[0], env.action_space.n))
+    step = 0
+
+    pi = actor.get_pi()
+    for episode_i in range(eval_episodes):
+        logs_episode = defaultdict(list)
+
+        obs, _ = env.reset()
+        done = False
+
+        while not done:
+
+            # ALGO LOGIC: put action logic here
+            with torch.no_grad():
+                s_idx = np.argmax(obs)
+                pi_at_s = pi[s_idx]
+                actions = np.random.choice(np.arange(env.action_space.n), p=pi_at_s)
+                # print(pi_at_s, actions)
+
+            a_idx = actions
+            sa_count[s_idx, a_idx] += 1
+
+            # TRY NOT TO MODIFY: execute the game and log data.
+            next_obs, rewards, terminateds, truncateds, infos = env.step(actions)
+            done = terminateds or truncateds
+
+            # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
+            obs = next_obs
+
+            logs_episode['rewards'].append(rewards)
+
+            step += 1
+
+            if step >= eval_steps:
+                break
+        if step >= eval_steps:
+            break
+
+
+        logs['returns'].append(np.sum(logs_episode['rewards']))
+        try:
+            logs['successes'].append(infos['is_success'])
+        except:
+            logs['successes'].append(False)
+
+    return_avg = np.mean(logs['returns'])
+    return_std = np.std(logs['returns'])
+    success_avg = np.mean(logs['successes'])
+    success_std = np.std(logs['successes'])
+    return return_avg, return_std, success_avg, success_std, sa_count
     # return np.array(eval_returns), np.array(eval_obs), np.array(eval_actions), np.array(eval_rewards), sa_counts
 
 
@@ -552,6 +622,8 @@ def run():
     rewards = torch.zeros((args.buffer_size * args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.buffer_size * args.num_steps, args.num_envs)).to(device)
     values = torch.zeros((args.buffer_size * args.num_steps, args.num_envs)).to(device)
+    agent_history = deque(maxlen=args.buffer_size)
+    envs_history = deque(maxlen=args.buffer_size)
 
     ### Oracle adaptive sampling setup
     sa_counts = np.zeros(shape=(envs.single_observation_space.shape[-1], envs.single_action_space.n))
@@ -559,6 +631,9 @@ def run():
 
     ### Load exact gradient
     if 'Chain' in args.env_id or 'GridWorld' in args.env_id:
+        # sa_occupancy_true = np.load(f'gridworld_clean/data/{args.env_id}/non_uniform/sa_occupancy_true.npy')
+        # grad_true = np.load(f'gridworld_clean/data/{args.env_id}/non_uniform/grad_true.npy')
+        # adv_true = np.load(f'gridworld_clean/data/{args.env_id}/non_uniform/adv_true.npy')
         sa_occupancy_true = np.load(f'gridworld_clean/data/{args.env_id}/sa_occupancy_true.npy')
         grad_true = np.load(f'gridworld_clean/data/{args.env_id}/grad_true.npy')
         adv_true = np.load(f'gridworld_clean/data/{args.env_id}/adv_true.npy')
@@ -578,6 +653,10 @@ def run():
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
+
+        agent_history.append(copy.deepcopy(agent))
+        envs_history.append(copy.deepcopy(envs))
+        # sa_counts[:] = 0
 
         for step in range(0, args.num_steps):
             global_step += args.num_envs
@@ -609,13 +688,14 @@ def run():
                 else:
                     action, logprob, _, value = agent.get_action_and_value(next_obs)
                     a_idx = action[0].item()
+                    # a_idx = np.random.choice(possible_actions, p=[0.1, 0.1, 0.1, 0.7])
 
                 values[buffer_pos] = value.flatten()
             actions[buffer_pos] = action
             logprobs[buffer_pos] = logprob
 
-            s_idx = np.where(next_obs[0] == 1)[0][0]
-            sa_counts[s_idx, a_idx] += 1
+            # s_idx = np.where(next_obs[0] == 1)[0][0]
+            # sa_counts[s_idx, a_idx] += 1
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
@@ -625,6 +705,7 @@ def run():
 
             buffer_pos += 1
             buffer_pos %= args.buffer_size * args.num_steps
+            # buffer_pos = np.clip(buffer_pos, a_min=0, a_max=args.num_steps-1)
             # if "final_info" in infos:
             #     for info in infos["final_info"]:
             #         if info and "episode" in info:
@@ -635,10 +716,18 @@ def run():
             if args.se_freq and global_step % args.se_freq == 0:
                 if 'Chain' in args.env_id or 'GridWorld' in args.env_id:
 
-                    b_obs = obs[:global_step].reshape((-1,) + envs.single_observation_space.shape)
-                    b_actions = actions[:global_step].reshape((-1,) + envs.single_action_space.shape)
+                    b_obs = obs[:buffer_pos].reshape((-1,) + envs.single_observation_space.shape)
+                    b_actions = actions[:buffer_pos].reshape((-1,) + envs.single_action_space.shape)
                     b_obs = b_obs.detach().numpy()
                     b_actions = b_actions.detach().numpy()
+
+                    # print(global_step, buffer_pos)
+                    # sa_counts[:] = 0
+                    for o, a in zip(b_obs, b_actions):
+                        s_idx = np.where(o == 1)[0][0]
+                        # a_idx = a[0]
+                        a_idx = int(a)
+                        sa_counts[s_idx, a_idx] += 1
 
                     grad_empirical = compute_gradient(envs.envs[0].unwrapped, agent.get_pi(), b_obs, b_actions.astype(int), adv_true)
                     # grad_empirical_norm = np.linalg.norm(grad_empirical)
@@ -788,20 +877,49 @@ def run():
 
 
         if iteration % args.eval_freq == 0:
-            return_avg, return_std, success_avg, success_std = simulate(env=env_eval, actor=agent,
-                                                                        eval_episodes=args.eval_episodes)
-            logs['timestep'].append(global_step)
-            logs['return'].append(return_avg)
-            logs['success_rate'].append(success_avg)
-            logs['target_update'].append(target_update_count)
+            return_avg, return_std, success_avg, success_std, _ = \
+                simulate(env=env_eval, actor=agent, eval_episodes=args.eval_episodes)
+            #
+            # # collect on-policy data
+            # _, _, _, _, sa_counts_on_policy = \
+            #     simulate(env=copy.deepcopy(envs_history[-1].envs[0]), actor=agent_history[-1], eval_episodes=1000, eval_steps=args.num_steps)
+            #
+            # # collect a lot of on-policy data to approximate the true distribution
+            # _, _, _, _, sa_counts_true = \
+            #     simulate_fast(env=copy.deepcopy(envs_history[-1].envs[0]), actor=agent_history[-1], eval_episodes=10000)
+            #
+            #
+
+            # sa_occupancy_true = sa_counts_true / sa_counts_true.sum()
+            # sa_occupancy_on_policy = sa_counts_on_policy / sa_counts_on_policy.sum()
+            # sa_occupancy = sa_counts / sa_counts.sum()
+            #
+            # se = np.abs(sa_occupancy - sa_occupancy_true).sum()
+            # se_on_policy = np.abs(sa_occupancy_on_policy - sa_occupancy_true).sum()
+            #
+            # # print(sa_occupancy)
+            #
+            # print(se)
+            # print(se_on_policy)
+            # logs_sampling_error['sampling_error'].append(se)
+            # logs_sampling_error['sampling_error_on_policy'].append(se_on_policy)
+            # # logs['sa_occupancy_eval'].append(sa_counts_eval)
+            # # logs_sampling_error['sa_occupancy'].append(sa_occupancy)
+            # # logs_sampling_error['sa_occupancy_true'].append(sa_occupancy_true)
 
             print(f"Eval num_timesteps={global_step}, " f"episode_return={return_avg:.2f} +/- {return_std:.2f}")
             print(f"Eval num_timesteps={global_step}, " f"episode_success={success_avg:.2f} +/- {success_std:.2f}")
             print()
 
+            logs['timestep'].append(global_step)
+            logs['return'].append(return_avg)
+            logs['success_rate'].append(success_avg)
+            logs['target_update'].append(target_update_count)
+
             np.savez(
                 f'{args.output_dir}/evaluations.npz',
                 **logs,
+                **logs_sampling_error
             )
 
     envs.close()

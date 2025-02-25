@@ -15,12 +15,12 @@ import torch.nn as nn
 import torch.optim as optim
 import yaml
 
-from PROPS.utils import Evaluate, AgentDiscrete, EvaluateDiscrete, ConfigLoader
+from PROPS.utils import Evaluate, AgentDiscrete, EvaluateDiscrete, ConfigLoader, StoreDict
 from PROPS.utils import get_latest_run_id, make_env, Agent
 
-def make_env(env_id, seed, idx, capture_video, run_name):
+def make_env(env_id, env_kwargs, seed, idx, capture_video, run_name):
     def thunk():
-        env = gym.make(env_id)
+        env = gym.make(env_id, **env_kwargs)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         if capture_video:
             if idx == 0:
@@ -57,6 +57,7 @@ def parse_args():
 
     # General training parameters (both PROPS and PPO)
     parser.add_argument("--env-id", type=str, default="GridWorld-5x5-v0", help="Environment id")
+    parser.add_argument("--env-kwargs", type=str, nargs="*", action=StoreDict, default={}, help="Optional keyword argument to pass to the env constructor")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
     parser.add_argument("--total-timesteps", type=int, default=30000, help="Number of timesteps to train")
     parser.add_argument("--seed", type=int, default=0, help="Seed of the experiment")
@@ -65,7 +66,8 @@ def parse_args():
     parser.add_argument("--config", type=str, default=None, help="Path to config file")
 
     # PPO hyperparameters
-    parser.add_argument("--num-steps", type=int, default=2048, help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
+    parser.add_argument("--num-steps", type=int, default=64, help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
+    parser.add_argument("--num-traj", type=int, default=1, help="PPO target batch size, the number of trajectories to collect between each PPO policy update")
     parser.add_argument("--buffer-batches", "-b", type=int, default=1, help="Number of PPO target batches to store in the replay buffer (b in paper)")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-4, help="PPO Adam optimizer learning rate")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True, help="Toggle learning rate annealing for PPO policy and value networks")
@@ -82,7 +84,7 @@ def parse_args():
     parser.add_argument("--target-kl", type=float, default=0.03, help="Target/cutoff KL divergence threshold for PPO update")
     parser.add_argument("--linear", type=int, default=0, help="")
     parser.add_argument("--actor-critic", type=int, default=0, help="")
-    parser.add_argument("--reinforce", type=int, default=0, help="")
+    parser.add_argument("--reinforce", type=int, default=1, help="")
     parser.add_argument("--oracle-adaptive", type=int, default=0, help="")
 
     # PROPS/ROS hyperparameters
@@ -139,6 +141,7 @@ def parse_args():
         args.update_epochs = 1
         args.minibatch_size = args.buffer_size
         args.ent_coef = 0
+        args.gae_lambda = 1 # advantage estimates reduce to MC discounted return estimates
     elif args.actor_critic:
         algo = 'actor_critic'
         args.update_epochs = 1
@@ -161,28 +164,6 @@ def parse_args():
     args.algo = f'{algo}_{sampling}'
     args.save_dir = f"{args.results_dir}/{args.env_id}/{args.algo}/{args.results_subdir}"
 
-
-    if args.config:
-        with open(args.config) as f:
-            try:
-                # args = yaml.load(f, Loader=ConfigLoader)
-                args_loaded = yaml.unsafe_load(f)
-                # # otherwise we use the same run_id and seed for every experiment
-                args_loaded.seed = args.seed
-                args_loaded.run_id = args.run_id
-                args_loaded.save_dir = f"{args_loaded.results_dir}/{args_loaded.env_id}/{args_loaded.algo}/{args_loaded.results_subdir}"
-
-                # if args_loaded.run_id is not None:
-                #     args_loaded.save_dir += f"/run_{args.run_id}"
-                # else:
-                #     run_id = get_latest_run_id(save_dir=save_dir) + 1
-                #     args_loaded.save_dir += f"/run_{run_id}"
-
-                args = args_loaded
-            except yaml.YAMLError as exc:
-                print(exc)
-                exit(1)
-
     if args.run_id is not None:
         args.save_dir += f"/run_{args.run_id}"
     else:
@@ -195,6 +176,52 @@ def parse_args():
         yaml.dump(args, f, sort_keys=True)
 
     return args
+
+
+def update_reinforce(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
+    # PPO UPDATE
+
+    # flatten buffer data
+    b_obs = obs[:global_step].view((-1,) + envs.single_observation_space.shape)
+    b_logprobs = logprobs[:global_step].view(-1)
+    b_actions = actions[:global_step].view((-1,) + envs.single_action_space.shape).long()
+    b_advantages = advantages[:global_step].view(-1)
+    b_returns = returns[:global_step].view(-1)
+    b_values = values[:global_step].view(-1)
+
+    _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs, b_actions)
+    newvalue = newvalue.view(-1)
+
+    pg_loss = (-(b_returns).mean() * b_logprobs).mean()
+    v_loss = 0.5 * ((newvalue - b_advantages) ** 2).mean()
+    # entropy_loss = entropy.mean()
+
+    loss = pg_loss + v_loss * args.vf_coef # - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+
+    optimizer.zero_grad()
+    loss.backward()
+
+    grad_norm = nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
+    optimizer.step()
+
+    # get update statistics if at least one minibatch update was performed.
+    y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
+    var_y = np.var(y_true)
+    explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
+    ppo_stats = {
+        # 't': global_step,
+        'ppo_value_loss': float(v_loss.item()),
+        'ppo_policy_loss': float(pg_loss.item()),
+        'ppo_explained_variance': float(explained_var),
+    }
+    if args.track:
+        writer.add_scalar("ppo/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+        writer.add_scalar("ppo/value_loss", v_loss.item(), global_step)
+        writer.add_scalar("ppo/policy_loss", pg_loss.item(), global_step)
+        writer.add_scalar("ppo/explained_variance", explained_var, global_step)
+
+    return ppo_stats
 
 
 def update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer):
@@ -583,7 +610,7 @@ def main():
     capture_video = False
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, args.seed + i, i, capture_video, run_name) for i in range(args.num_envs)]
+        [make_env(args.env_id, args.env_kwargs, args.seed + i, i, capture_video, run_name) for i in range(args.num_envs)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only continuous action space is supported"
     # env_reward_normalize = envs.envs[0].env
@@ -739,36 +766,21 @@ def main():
                 agent_buffer.append(copy.deepcopy(agent))
 
             # Compute advantages and returns. If props_adv = True, then we must recompute advantages before every PROPS update, not just every target update.
-            if args.reinforce:
-                pass
-                # with torch.no_grad():
-                #     # with reinforce, advantages = return to go
-                #     advantages = torch.zeros_like(rewards).to(args.device)
-                #     num_steps = indices.shape[0]
-                #     advantages[:, -1] = rewards[:, -1]
-                #     for t in reversed(range(num_steps)):
-                #         if t == num_steps - 1:
-                #             nextnonterminal = 1.0 - next_done
-                #             nextvalues = next_value
-                #         else:
-                #             advantages[t] = advantages[t] - values[t]
-                #     returns = advantages + values
-            else:
-                with torch.no_grad():
-                    next_value = agent.get_value(next_obs).reshape(1, -1)
-                    advantages = torch.zeros_like(rewards).to(args.device)
-                    lastgaelam = 0
-                    num_steps = indices.shape[0]
-                    for t in reversed(range(num_steps)):
-                        if t == num_steps - 1:
-                            nextnonterminal = 1.0 - next_done
-                            nextvalues = next_value
-                        else:
-                            nextnonterminal = 1.0 - dones[t + 1]
-                            nextvalues = values[t + 1]
-                        delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                        advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-                    returns = advantages + values
+            with torch.no_grad():
+                next_value = agent.get_value(next_obs).reshape(1, -1)
+                advantages = torch.zeros_like(rewards).to(args.device)
+                lastgaelam = 0
+                num_steps = indices.shape[0]
+                for t in reversed(range(num_steps)):
+                    if t == num_steps - 1:
+                        nextnonterminal = 1.0 - next_done
+                        nextvalues = next_value
+                    else:
+                        nextnonterminal = 1.0 - dones[t + 1]
+                        nextvalues = values[t + 1]
+                    delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                    advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                returns = advantages + values
 
             # Compute sampling error *before* updating the target policy.
             if do_se:
@@ -797,7 +809,12 @@ def main():
                     lrnow = frac * args.learning_rate
                     optimizer.param_groups[0]["lr"] = lrnow
 
-                ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+                if args.reinforce:
+                    ppo_stats = update_reinforce(agent, optimizer, envs, obs, logprobs, actions, advantages, returns,
+                                                 values, args, global_step, writer)
+                else:
+                    ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values,
+                                           args, global_step, writer)
 
             if do_props_update:
                 props_update += 1

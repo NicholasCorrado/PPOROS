@@ -8,6 +8,8 @@ from collections import defaultdict, deque
 from distutils.util import strtobool
 
 import gymnasium as gym
+from torch.distributions import Categorical
+
 import custom_envs
 import numpy as np
 import torch
@@ -16,8 +18,44 @@ import torch.optim as optim
 import yaml
 
 from PROPS.gridworld_scripts.compute_true_gradient import simulate, compute_gradient, value_iteration
-from PROPS.utils import Evaluate, AgentDiscrete, EvaluateDiscrete, ConfigLoader, StoreDict
+from PROPS.utils import Evaluate, AgentDiscrete, EvaluateDiscrete, ConfigLoader, StoreDict, layer_init
 from PROPS.utils import get_latest_run_id, make_env, Agent
+
+class AgentDiscrete(nn.Module):
+    def __init__(self, envs, linear):
+        super().__init__()
+        # self.critic = nn.Sequential(
+        #     layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+        #     nn.Tanh(),
+        #     layer_init(nn.Linear(64, 64)),
+        #     nn.Tanh(),
+        #     layer_init(nn.Linear(64, 1), std=1.0),
+        # )
+        # self.actor = nn.Sequential(
+        #     layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
+        #     nn.Tanh(),
+        #     layer_init(nn.Linear(64, 64)),
+        #     nn.Tanh(),
+        #     layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
+        # )
+
+        self.critic = nn.Sequential(
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), envs.single_action_space.n), std=0),
+        )
+        self.actor = nn.Sequential(
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64), std=0),
+        )
+
+    def get_value(self, x):
+        return self.critic(x)
+
+    def get_action_and_value(self, x, action=None):
+        logits = self.actor(x)
+        probs = Categorical(logits=logits)
+        if action is None:
+            action = probs.sample()
+        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+
 
 def make_env(env_id, env_kwargs, seed, idx, capture_video, run_name):
     def thunk():
@@ -50,14 +88,14 @@ def parse_args():
     # Saving and logging parameters
     parser.add_argument("--log-stats", type=int, default=1, help="If true, training statistics are logged")
     parser.add_argument("--eval", type=int, default=1, help="Whether or not to evaluate target policy")
-    parser.add_argument("--eval-freq", type=int, default=10*1, help="Evaluate PPO and/or PROPS policy every eval_freq PPO updates")
+    parser.add_argument("--eval-freq", type=int, default=100*1, help="Evaluate PPO and/or PROPS policy every eval_freq PPO updates")
     parser.add_argument("--eval-episodes", type=int, default=100, help="Number of episodes over which policies are evaluated")
     parser.add_argument("--results-dir", "-f", type=str, default="results", help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
     parser.add_argument("--results-subdir", "-s", type=str, default="", help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
     parser.add_argument("--run-id", type=int, default=None, help="Results will be saved to <results_dir>/<env_id>/<subdir>/<algo>/run_<run_id>")
 
     # General training parameters (both PROPS and PPO)
-    parser.add_argument("--env-id", type=str, default="GridWorld-5x5-v0", help="Environment id")
+    parser.add_argument("--env-id", type=str, default="GridWorld1D-10-v0", help="Environment id")
     parser.add_argument("--env-kwargs", type=str, nargs="*", action=StoreDict, default={}, help="Optional keyword argument to pass to the env constructor")
     parser.add_argument("--num-envs", type=int, default=1, help="Number of parallel environments")
     parser.add_argument("--total-timesteps", type=int, default=250000*1, help="Number of timesteps to train")
@@ -67,7 +105,7 @@ def parse_args():
     parser.add_argument("--config", type=str, default=None, help="Path to config file")
 
     # PPO hyperparameters
-    parser.add_argument("--num-steps", type=int, default=10, help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
+    parser.add_argument("--num-steps", type=int, default=100, help="PPO target batch size (n in paper), the number of steps to collect between each PPO policy update")
     # parser.add_argument("--num-traj", type=int, default=10*1, help="PPO target batch size, the number of trajectories to collect between each PPO policy update")
     parser.add_argument("--buffer-batches", "-b", type=int, default=1, help="Number of PPO target batches to store in the replay buffer (b in paper)")
     parser.add_argument("--learning-rate", "-lr", type=float, default=1e-3, help="PPO Adam optimizer learning rate")
@@ -193,6 +231,7 @@ def update_reinforce(agent, optimizer, envs, obs, logprobs, actions, advantages,
     b_logprobs = logprobs.view(-1)
     b_actions = actions.view((-1,) + envs.single_action_space.shape).long()
     b_advantages = advantages.view(-1)
+    # print(b_advantages)
     b_returns = returns.view(-1)
     b_values = values.view(-1)
 
@@ -202,7 +241,7 @@ def update_reinforce(agent, optimizer, envs, obs, logprobs, actions, advantages,
     # pg_loss = -(b_returns.mean() * newlogprobs).mean()
     pg_loss = -(b_advantages * newlogprobs).mean()
 
-    v_loss = 0.5 * ((newvalues - b_advantages) ** 2).mean()
+    v_loss = 0.5 * ((newvalues - b_returns) ** 2).mean()
     entropy_loss = entropy.mean()
 
     loss = pg_loss + v_loss * args.vf_coef - args.ent_coef * entropy_loss
@@ -480,9 +519,9 @@ def main():
     # adv_true, q_true, v_true = value_iteration(env, 100)
     # pi = np.ones(shape=(25, 4))*0.25
     # grad_true = compute_gradient(env, pi, obs, actions, adv_true)
-    sa_occupancy_true = np.load('../gridworld_scripts/data/GridWorld-5x5-v0/sa_occupancy_true.npy')
-    grad_true = np.load('../gridworld_scripts/data/GridWorld-5x5-v0/grad_true.npy')
-    adv_true = np.load('../gridworld_scripts/data/GridWorld-5x5-v0/adv_true.npy')
+    sa_occupancy_true = np.load(f'../gridworld_clean/data/{args.env_id}/sa_occupancy_true.npy')
+    grad_true = np.load(f'../gridworld_clean/data/{args.env_id}/grad_true.npy')
+    adv_true = np.load(f'../gridworld_clean/data/{args.env_id}/adv_true.npy')
 
     grad_true_norm = np.linalg.norm(grad_true)
 
@@ -521,28 +560,28 @@ def main():
             elif args.oracle_adaptive:
                 s_idx = np.argmax(next_obs)
                 sa = sa_counts[s_idx]
-                pi = agent.get_pi_s(next_obs)[0]
+                pi = agent.get_pi_at_s(next_obs)[0]
 
                 if np.sum(sa) == 0:
                     a_idx = np.random.choice(possible_actions, p=pi)
                 else:
                     pi_empirical = sa / np.sum(sa)
-                    a_idx = np.argmin(pi_empirical - agent.get_pi_s(next_obs))
+                    a_idx = np.argmin(pi_empirical - agent.get_pi_at_s(next_obs))
 
                 action = torch.Tensor([a_idx])
 
                 _, _, logprobs, _, values = agent_props.get_action_and_value(next_obs, action)
             elif args.props or args.ros:
-                action, action_probs, logprobs, entropy, values = agent_props.get_action_and_value(next_obs)
+                action, logprobs, entropy, values = agent_props.get_action_and_value(next_obs)
                 # fetch value and logprob w.r.t target policy (not behavior policy)
                 _, _, logprobs, _, values = agent_props.get_action_and_value(next_obs, action)
 
                 a_idx = action[0]
             else:
-                action, action_probs, logprobs, entropy, values = agent.get_action_and_value(next_obs)
+                action, logprobs, entropy, values = agent.get_action_and_value(next_obs)
                 a_idx = action[0]
 
-
+            print(values)
             actions_buffer[buffer_pos] = action
             values_buffer[buffer_pos] = values
 
@@ -567,6 +606,8 @@ def main():
         buffer_pos += 1
         buffer_pos %= args.buffer_size
 
+        # if terminated: print(reward)
+
         # determine what all needs to be done at this timestep
         do_ppo_update = ((global_step+1) % args.num_steps == 0) or args.exact
         do_props_update = (args.props and (global_step+1) % args.props_num_steps == 0) or args.ros
@@ -581,11 +622,11 @@ def main():
                 values = values_buffer
             else:
                 # right shift buffers so that the data is ordered from oldest to youngest
-                obs = np.roll(obs_buffer, buffer_pos)
-                actions = np.roll(actions_buffer, buffer_pos)
-                rewards = np.roll(rewards_buffer, buffer_pos)
-                dones = np.roll(dones_buffer, buffer_pos)
-                values = np.roll(values_buffer, buffer_pos)
+                obs = torch.roll(obs_buffer, buffer_pos)
+                actions = torch.roll(actions_buffer, buffer_pos)
+                rewards = torch.roll(rewards_buffer, buffer_pos)
+                dones = torch.roll(dones_buffer, buffer_pos)
+                values = torch.roll(values_buffer, buffer_pos)
 
             # Store the b previous target policies. We do this so we can compute on-policy sampling error with respect to
             # the target policy sequence obtained by PROPS.
@@ -593,14 +634,14 @@ def main():
             #     next_obs_buffer.append(copy.deepcopy(next_obs))
             #     agent_buffer.append(copy.deepcopy(agent))
 
+            # bootstrap value if not done
             with torch.no_grad():
                 next_value = agent.get_value(next_obs).reshape(1, -1)
                 advantages = torch.zeros_like(rewards).to(args.device)
                 lastgaelam = 0
-                num_steps = len(obs)
-                for t in reversed(range(num_steps)):
-                    if t == num_steps - 1:
-                        nextnonterminal = 1.0 - next_terminated
+                for t in reversed(range(args.num_steps)):
+                    if t == args.num_steps - 1:
+                        nextnonterminal = 1.0 - next_done
                         nextvalues = next_value
                     else:
                         nextnonterminal = 1.0 - dones[t + 1]
@@ -613,14 +654,82 @@ def main():
             if do_ppo_update:
                 target_update += 1
 
-                if args.exact:
-                    eval_returns, eval_obs, eval_actions, eval_rewards, sa_eval = eval_module.simulate(train_env=envs)
-                    A_init, q_init, v_init = value_iteration(envs.envs[0].unwrapped, 20)
-                    grad_true = compute_gradient(envs.envs[0].unwrapped, agent.get_pi(), eval_obs, eval_actions, A_init)
-                    theta += args.learning_rate*grad_true.reshape(25, 4)
-                else:
-                    # ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
-                    ppo_stats, grad_empirical = update_reinforce(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+                # flatten the batch
+                b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
+                b_logprobs = logprobs.reshape(-1)
+                b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
+                b_advantages = advantages.reshape(-1)
+                b_returns = returns.reshape(-1)
+                b_values = values.reshape(-1)
+
+                args.batch_size = int(args.num_envs * args.num_steps)
+                args.minibatch_size = int(args.batch_size // args.num_minibatches)
+
+                # Optimizing the policy and value network
+                b_inds = np.arange(args.batch_size)
+                clipfracs = []
+                for epoch in range(args.update_epochs):
+                    np.random.shuffle(b_inds)
+                    for start in range(0, args.batch_size, args.minibatch_size):
+                        end = start + args.minibatch_size
+                        mb_inds = b_inds[start:end]
+
+                        _, _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds],
+                                                                                      b_actions.long()[mb_inds])
+                        logratio = newlogprob - b_logprobs[mb_inds]
+                        ratio = logratio.exp()
+
+                        with torch.no_grad():
+                            # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                            old_approx_kl = (-logratio).mean()
+                            approx_kl = ((ratio - 1) - logratio).mean()
+                            clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+
+                        mb_advantages = b_advantages[mb_inds]
+                        if args.norm_adv:
+                            mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+
+                        # Policy loss
+                        pg_loss1 = -mb_advantages * ratio
+                        pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                        pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+                        # Value loss
+                        newvalue = newvalue.view(-1)
+                        if args.clip_vloss:
+                            v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
+                            v_clipped = b_values[mb_inds] + torch.clamp(
+                                newvalue - b_values[mb_inds],
+                                -args.clip_coef,
+                                args.clip_coef,
+                            )
+                            v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                            v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                            v_loss = 0.5 * v_loss_max.mean()
+                        else:
+                            v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+
+                        entropy_loss = entropy.mean()
+                        loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+
+                        optimizer.zero_grad()
+                        loss.backward()
+                        nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
+                        optimizer.step()
+
+                    if args.target_kl is not None and approx_kl > args.target_kl:
+                        break
+
+
+                #
+                # if args.exact:
+                #     eval_returns, eval_obs, eval_actions, eval_rewards, sa_eval = eval_module.simulate(train_env=envs)
+                #     A_init, q_init, v_init = value_iteration(envs.envs[0].unwrapped, 20)
+                #     grad_true = compute_gradient(envs.envs[0].unwrapped, agent.get_pi(), eval_obs, eval_actions, A_init)
+                #     theta += args.learning_rate*grad_true.reshape(25, 4)
+                # else:
+                #     # ppo_stats = update_ppo(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
+                #     ppo_stats, grad_empirical = update_reinforce(agent, optimizer, envs, obs, logprobs, actions, advantages, returns, values, args, global_step, writer)
 
             if do_props_update:
                 props_update += 1
