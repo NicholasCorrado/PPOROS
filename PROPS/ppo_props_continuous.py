@@ -581,7 +581,7 @@ def main():
 
     # load pretrained policy and normalization information
     if args.path:
-        agent = torch.load(f'{args.path}/best_model.zip').to(args.device)
+        agent = torch.load(f'{args.path}/best_model.zip',weights_only=False).to(args.device)
         with open(f'{args.path}/env_obs_normalize', 'rb') as f:
             obs_rms = pickle.load(f)
             env_obs_normalize.obs_rms = obs_rms
@@ -648,7 +648,7 @@ def main():
         dones_buffer[buffer_pos] = next_done
 
         with torch.no_grad():
-            if args.props:
+            if args.props or args.ros:
                 action, action_mean, action_std, logprob_props, entropy, _ = agent_props.get_action_and_value(
                     next_obs)
                 if args.track:
@@ -682,7 +682,7 @@ def main():
 
         # determine what all needs to be done at this timestep
         do_ppo_update = global_step % args.num_steps == 0
-        do_props_update = args.props and global_step % args.props_num_steps == 0
+        do_props_update = (args.ros or args.props) and global_step % args.props_num_steps == 0
         do_se = args.se and global_step % (args.num_steps * args.se_freq) == 0
         do_eval = (global_step + 1) % args.eval_freq == 0
 
